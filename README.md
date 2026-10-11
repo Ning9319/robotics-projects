@@ -1,1 +1,7 @@
-This is a repository with "template" code the course CSE276A - Introduction to Robotics @ UC San Diego. 
+## Abstract
+
+This is a repository containing code for course CSE276A - Introduction to Robotics @ UC San Diego.
+
+## Authors
+
+Ning Li & Jingran Zhang
