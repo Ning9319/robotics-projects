@@ -1,0 +1,15 @@
+services:
+  dev:
+    build: .
+    volumes:
+      - .:/ws/src/robotics-projects
+      - ros_build:/ws/build
+      - ros_install:/ws/install
+      - ros_log:/ws/log
+    working_dir: /ws
+    init: true
+
+volumes:
+  ros_build:
+  ros_install:
+  ros_log:
