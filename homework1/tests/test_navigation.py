@@ -40,14 +40,32 @@ class CoreTests(unittest.TestCase):
         l, r = self.calib.wheel_commands(10, -10)
         self.assertLessEqual(max(abs(l), abs(r)), .25 + 1e-9)
 
-    def test_imu_heading_relative_and_dead_reckoning(self):
+    def test_gyro_bias_heading_and_dead_reckoning(self):
         est = DeadReckoner(self.calib)
-        est.observe_yaw(1.0)
-        self.assertAlmostEqual(est.pose.theta, 0)
+        for i in range(41):
+            est.observe_gyro(0.4, i * 0.1)
+        self.assertTrue(est.has_heading)
+        self.assertAlmostEqual(est.gyro_bias_dps, 0.4, places=8)
+        for i in range(1, 11):
+            est.observe_gyro(90.4, 4.0 + i * 0.1)
+        self.assertAlmostEqual(est.pose.theta, math.pi / 2, places=6)
         est.integrate(.2, .2, .1)
-        self.assertAlmostEqual(est.pose.x, .012)
-        est.observe_yaw(1 + math.pi / 2)
-        self.assertAlmostEqual(est.pose.theta, math.pi / 2)
+        self.assertAlmostEqual(est.pose.x, .012 * math.cos(math.pi / 4), places=6)
+        self.assertAlmostEqual(est.pose.y, .012 * math.sin(math.pi / 4), places=6)
+
+    def test_gyro_calibration_rejects_motion(self):
+        est = DeadReckoner(self.calib)
+        for i in range(40):
+            est.observe_gyro(30.0 if i % 2 else -30.0, i * 0.1)
+        with self.assertRaises(ValueError):
+            est.observe_gyro(0.0, 4.0)
+
+    def test_gyro_rejects_stale_callback(self):
+        est = DeadReckoner(self.calib)
+        for i in range(41):
+            est.observe_gyro(0.0, i * 0.1)
+        with self.assertRaises(ValueError):
+            est.observe_gyro(0.0, 4.4)
 
     def test_goal_position_and_heading_required(self):
         from hw1_navigation.core import Waypoint

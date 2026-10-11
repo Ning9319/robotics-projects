@@ -16,15 +16,6 @@ from std_msgs.msg import Float32MultiArray
 from .core import Calibration, DeadReckoner, WaypointNavigator, read_waypoints
 
 
-def quaternion_yaw(q) -> float:
-    vals = (q.x, q.y, q.z, q.w)
-    norm = math.sqrt(sum(v * v for v in vals))
-    if not all(math.isfinite(v) for v in vals) or norm < 0.01:
-        raise ValueError('Invalid IMU quaternion')
-    x, y, z, w = (v / norm for v in vals)
-    return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-
-
 class WaypointFollower(Node):
     def __init__(self):
         super().__init__('hw1_waypoint_follower')
@@ -37,6 +28,8 @@ class WaypointFollower(Node):
         self.active = self.enabled
         self.last_imu_time = None
         self.last_tick = time.monotonic()
+        self.start_time = self.last_tick
+        self.heading_ready_logged = False
         self.target_start_time = None
         self.last_command = (0.0, 0.0)
         self.last_stage = None
@@ -74,11 +67,19 @@ class WaypointFollower(Node):
         if not self.active or self.estimator is None:
             return
         try:
-            yaw = quaternion_yaw(msg.orientation)
-            self.estimator.observe_yaw(yaw)
-            self.last_imu_time = time.monotonic()
+            # The supplied template publishes raw degrees/second despite
+            # sensor_msgs/Imu specifying radians/second by convention.
+            # Do not convert the sensor stream a second time here.
+            now = time.monotonic()
+            ready_before = self.estimator.has_heading
+            self.estimator.observe_gyro(float(msg.angular_velocity.z), now)
+            self.last_imu_time = now
+            if self.estimator.has_heading and not ready_before:
+                self.get_logger().info(
+                    f'Gyro bias ready: {self.estimator.gyro_bias_dps:+.3f} deg/s; '
+                    'relative heading initialized at 0 rad')
         except ValueError as exc:
-            self.abort(f'Invalid IMU orientation: {exc}')
+            self.abort(f'Invalid gyro or failed stationary calibration: {exc}')
 
     def send(self, left: float, right: float) -> None:
         msg = Float32MultiArray()
@@ -103,11 +104,17 @@ class WaypointFollower(Node):
             self.abort('Control loop delayed > 0.2 s')
             return
         if self.last_imu_time is None:
-            # Do not drive until a valid IMU heading is received.
-            self.send(0.0, 0.0)
+            if now - self.start_time > 8.0:
+                self.abort('No IMU samples received in 8 seconds')
+            else:
+                self.send(0.0, 0.0)
             return
         if now - self.last_imu_time > float(self.get_parameter('imu_timeout_s').value):
             self.abort('IMU data stale')
+            return
+        if not self.estimator.has_heading:
+            # Four seconds stationary bias calibration before ANY motion.
+            self.send(0.0, 0.0)
             return
         self.estimator.integrate(*self.last_command, dt)
         result = self.navigator.update(self.estimator.pose)

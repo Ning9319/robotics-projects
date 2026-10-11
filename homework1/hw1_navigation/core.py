@@ -81,29 +81,71 @@ class Calibration:
 
 
 class DeadReckoner:
-    """Estimated XY from calibrated motor commands, heading from IMU yaw.
+    """Position: calibrated command-integrated odometry (open loop).
 
-    Open-loop XY will drift if wheels slip or motors differ from calibration.
-    The first IMU yaw defines heading zero; robot must start facing world +X.
+    Heading: bias-corrected integration of template motor_control's gyro_z,
+    which is forwarded as DEGREES/SECOND (not ROS-standard rad/s).
+
+    The robot MUST stay still throughout the initial bias calibration.
+    The initial pose is (0,0,0); align the chassis with world +X.
+    Absolute fused yaw is intentionally ignored because physical tests showed
+    a 90-degree chassis rotation produced only ~15 degrees fused yaw change.
     """
-    def __init__(self, calib: Calibration):
+
+    def __init__(self, calib: Calibration, gyro_bias_seconds: float = 4.0):
         self.calib = calib
         self.pose = Pose()
-        self._yaw_zero = None
+        self._bias_seconds = gyro_bias_seconds
+        self._bias_start = None
+        self._bias_samples = []
+        self._gyro_bias_dps = None
+        self._last_gyro_time = None
         self._last_integrated_heading = 0.0
 
     @property
     def has_heading(self) -> bool:
-        return self._yaw_zero is not None
+        return self._gyro_bias_dps is not None
 
-    def observe_yaw(self, raw_yaw: float) -> None:
-        if not math.isfinite(raw_yaw):
-            raise ValueError('Invalid IMU yaw')
-        if self._yaw_zero is None:
-            self._yaw_zero = raw_yaw
-        self.pose.theta = wrap(self.calib.yaw_sign * wrap(raw_yaw - self._yaw_zero))
+    @property
+    def gyro_bias_dps(self):
+        return self._gyro_bias_dps
+
+    def observe_gyro(self, gz_dps: float, now: float) -> None:
+        """Ingest template's angular_velocity.z expressed in deg/s.
+
+        now is monotonic seconds. No motors may run until bias is ready.
+        Integration uses IMU callback time, not the slower control-tick time.
+        """
+        if not (math.isfinite(gz_dps) and math.isfinite(now)):
+            raise ValueError('Non-finite gyro data')
+        if self._bias_start is None:
+            self._bias_start = now
+        if self._gyro_bias_dps is None:
+            if now - self._bias_start < self._bias_seconds:
+                self._bias_samples.append(gz_dps)
+                return
+            if len(self._bias_samples) < 20:
+                raise ValueError('Too few IMU samples to calibrate gyro bias')
+            bias = sum(self._bias_samples) / len(self._bias_samples)
+            spread = math.sqrt(sum((z - bias) ** 2 for z in self._bias_samples)
+                               / len(self._bias_samples))
+            if spread > 5.0 or max(abs(z - bias) for z in self._bias_samples) > 25.0:
+                raise ValueError('Gyro calibration was not stationary; restart while still')
+            self._gyro_bias_dps = bias
+            self._last_gyro_time = now
+            return
+        dt = now - self._last_gyro_time
+        self._last_gyro_time = now
+        if dt <= 0 or dt > 0.2:
+            raise ValueError(f'Unexpected gyro sample interval: {dt:.3f}s')
+        self.pose.theta = wrap(self.pose.theta + self.calib.yaw_sign *
+                               math.radians(gz_dps - self._gyro_bias_dps) * dt)
 
     def integrate(self, left: float, right: float, dt: float) -> None:
+        """Integrate XY with calibrated motor command and current gyro heading.
+
+        This is NOT encoder odometry: slippage and motor mismatch cause drift.
+        """
         if not self.has_heading or dt <= 0:
             return
         if not (math.isfinite(dt) and dt <= 0.2):
