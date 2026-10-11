@@ -1,0 +1,8 @@
+{
+  "linear_gain_mps_per_command": null,
+  "yaw_gain_radps_per_command_difference": null,
+  "imu_yaw_sign": 1,
+  "max_motor_command": 0.25,
+  "position_tolerance_m": 0.10,
+  "heading_tolerance_rad": 0.15
+}
