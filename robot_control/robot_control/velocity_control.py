@@ -44,7 +44,7 @@ class VelocityControlNode(Node):
         # Converts angular_velocity.z to rad/s. motor_control passes the raw value (deg/s).
         self.declare_parameter('gyro_scale', math.pi / 180.0)
         # Seconds of standing still at startup used to measure the gyro bias.
-        self.declare_parameter('gyro_bias_time', 2.0)
+        self.declare_parameter('gyro_bias_time', 3.0)
         self.declare_parameter('imu_timeout', 0.5)
         # Model and controller parameters share their dataclass field names.
         for name, default in {**asdict(DiffDriveModel()), **asdict(ControllerParams())}.items():
@@ -76,7 +76,7 @@ class VelocityControlNode(Node):
         self.bias_samples = []
         self.bias_start = None
         self.last_cmd = (0.0, 0.0)
-        self.finished_logged = False
+        self.finished = False
 
         self.cmd_pub = self.create_publisher(Float32MultiArray, 'motor_commands', 10)
         self.create_subscription(Imu, 'imu_data', self._imu_callback, 10)
@@ -111,10 +111,13 @@ class VelocityControlNode(Node):
                     f'Measuring gyro bias for {self.gyro_bias_time:.1f} s, keep the robot still')
             self.bias_samples.append(gz)
             if stamp - self.bias_start >= self.gyro_bias_time:
-                self.gyro_bias = sum(self.bias_samples) / len(self.bias_samples)
+                n = len(self.bias_samples)
+                self.gyro_bias = sum(self.bias_samples) / n
+                # A large spread means the robot was moved during the measurement.
+                std = math.sqrt(sum((s - self.gyro_bias) ** 2 for s in self.bias_samples) / n)
                 self.heading = self.start_pose[2]
-                self.get_logger().info(f'Gyro bias {self.gyro_bias:+.3f} '
-                                       f'({len(self.bias_samples)} samples)')
+                self.get_logger().info(f'Gyro bias {self.gyro_bias:+.3f}, std {std:.3f} '
+                                       f'({n} samples)')
         else:
             rate = self.imu_yaw_sign * (gz - self.gyro_bias) * self.gyro_scale
             self.heading = wrap_angle(self.heading + rate * (stamp - self.last_stamp))
@@ -145,9 +148,9 @@ class VelocityControlNode(Node):
         self._publish(*self.model.twist_to_cmds(v, w))
 
         if self.controller.done:
-            if not self.finished_logged:
+            if not self.finished:
                 self.get_logger().info('All waypoints reached')
-                self.finished_logged = True
+                self.finished = True  # main() stops spinning and exits
             return
         x, y, theta = self.estimator.pose
         self.get_logger().info(
@@ -171,7 +174,8 @@ def main(args=None):
     rclpy.init(args=args)
     node = VelocityControlNode()
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and not node.finished:
+            rclpy.spin_once(node, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
