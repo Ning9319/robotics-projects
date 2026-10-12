@@ -121,11 +121,12 @@ class PoseEstimator:
 
 @dataclass
 class ControllerParams:
-    max_v: float = 0.2          # m/s, cruise speed
-    # Slowest speed while approaching a waypoint. Kept at max_v: lower commands sit near the
-    # 0.07 deadband where the robot moves slower than the linear model predicts, so it
-    # stopped short. The 0.18 s actuation delay cancels out (late start, late stop).
-    min_v: float = 0.2
+    max_v: float = 0.27         # m/s, cruise speed (cmd 0.2, where speed was calibrated)
+    # Slowest speed while approaching a waypoint. Kept at max_v: slowing down toward the
+    # 0.07 deadband made the robot crawl with one wheel stalled. A constant speed keeps the
+    # commands in the calibrated range (0.15-0.3), and the 0.18 s actuation delay cancels
+    # out (late start, late stop).
+    min_v: float = 0.27
     # Limits steering while driving so both wheels keep turning forward; a reversed wheel at
     # low command is a slow in-place turn, which stalls on our floor.
     max_curvature: float = 1.5  # 1/m
