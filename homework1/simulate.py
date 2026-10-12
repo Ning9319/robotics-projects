@@ -14,6 +14,7 @@ import math
 import os
 import random
 import sys
+from collections import deque
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -32,7 +33,7 @@ BLUE, ORANGE, AQUA = '#2a78d6', '#eb6834', '#1baf7a'
 INK, MUTED, GRID = '#1f1f1e', '#6b6a64', '#e4e3dd'
 
 
-def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, seed):
+def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, seed, delay):
     rng = random.Random(seed)
     true_pose = waypoints[0]
     estimator = PoseEstimator(waypoints[0])
@@ -44,10 +45,13 @@ def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, 
     controller = WaypointController(waypoints, params, on_reached=on_reached)
     log = {'t': [], 'true': [], 'est': [], 'left': [], 'right': []}
     cmd = (0.0, 0.0)
+    # The real rover reacts ~0.18 s after a command (measured in spin calibration).
+    pending = deque([(0.0, 0.0)] * round(delay / dt))
     t = 0.0
     while not controller.done and t < max_time:
         # Same order as the ROS node: propagate with last command, read IMU, compute control.
-        true_pose = integrate_pose(true_pose, *truth.cmds_to_twist(*cmd), dt)
+        pending.append(cmd)
+        true_pose = integrate_pose(true_pose, *truth.cmds_to_twist(*pending.popleft()), dt)
         estimator.predict(*model.cmds_to_twist(*cmd), dt)
         if use_imu:
             estimator.set_heading(true_pose[2] + rng.gauss(0.0, imu_noise))
@@ -131,6 +135,8 @@ def main():
     parser.add_argument('--imu-noise', type=float, default=0.01, help='IMU yaw noise std (rad)')
     parser.add_argument('--allow-reverse', action='store_true')
     parser.add_argument('--dt', type=float, default=0.05)
+    parser.add_argument('--delay', type=float, default=0.18,
+                        help='actuation delay of the simulated robot (s)')
     parser.add_argument('--max-time', type=float, default=180.0)
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
@@ -143,7 +149,8 @@ def main():
     params = ControllerParams(allow_reverse=args.allow_reverse)
 
     log, reached, finished = simulate(waypoints, model, truth, params, not args.no_imu,
-                                      args.imu_noise, args.dt, args.max_time, args.seed)
+                                      args.imu_noise, args.dt, args.max_time, args.seed,
+                                      args.delay)
 
     print(f'{"finished" if finished else "TIMED OUT"} in {log["t"][-1]:.1f} s')
     print(f'{"wp":>3} {"goal (x, y, th)":>22} {"true (x, y, th)":>22} {"pos err":>8} {"th err":>7}')
