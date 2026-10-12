@@ -41,24 +41,33 @@ class DiffDriveModel:
     v = (v_R + v_L) / 2,  w = (v_R - v_L) / wheel_base
     x' = v cos(theta),    y' = v sin(theta),    theta' = w
 
-    The default values are placeholders; replace them with calibrated ones.
+    Defaults are calibrated on our rover on a wooden floor (homework1/calibrate.py).
     """
 
     # Wheel ground speed (m/s) produced by one unit of motor command.
-    speed_per_cmd: float = 1.0
-    # Effective track width (m). Calibrate from in-place turns, it absorbs wheel slip.
-    wheel_base: float = 0.13
+    # Straight runs at cmd 0.2: 0.227 m in 2 s, 1.307 m in 6 s -> 0.27 m/s.
+    speed_per_cmd: float = 1.35
+    # Effective track width (m), absorbs the skid-steer slip. From in-place turns at
+    # cmd 0.5: 120 deg/s = 2 * 0.5 * 1.35 / wheel_base.
+    wheel_base: float = 0.64
     # Multipliers that compensate for left/right motor asymmetry (>1 means that wheel is faster).
+    # Measured drift was 3 cm left over 1.3 m, small enough to leave at 1.0.
     left_trim: float = 1.0
     right_trim: float = 1.0
-    # Smallest command magnitude that actually turns a wheel (motor deadband).
-    min_cmd: float = 0.0
+    # Smallest command magnitude that moves the robot when driving straight.
+    min_cmd: float = 0.07
     # motor_control clips commands to +-0.5.
     max_cmd: float = 0.5
+    # In-place turns stall below ~0.5 on our floor (cmd 0.4 turned 84 deg in 1 s, then
+    # stuck), so a pure rotation always uses this command. 0 disables it.
+    spin_cmd: float = 0.5
 
     def twist_to_cmds(self, v, w):
         """Convert body velocity (m/s, rad/s) to (left, right) motor commands."""
-        left = (v - w * self.wheel_base / 2) / (self.speed_per_cmd * self.left_trim)
+        if v == 0.0 and w != 0.0 and self.spin_cmd > 0.0:
+            spin = math.copysign(self.spin_cmd, w)
+            return -spin, spin
+        left =(v - w * self.wheel_base / 2) / (self.speed_per_cmd * self.left_trim)
         right = (v + w * self.wheel_base / 2) / (self.speed_per_cmd * self.right_trim)
         # Scale both wheels together so saturation keeps the turning radius.
         peak = max(abs(left), abs(right))
@@ -116,12 +125,19 @@ class ControllerParams:
     min_v: float = 0.05         # m/s, slowest speed while approaching a waypoint
     max_w: float = 1.5          # rad/s
     k_rho: float = 1.0          # forward speed gain on remaining distance
-    k_heading: float = 2.0      # heading correction gain while driving
-    k_theta: float = 2.0        # rotation gain for in-place turns
+    k_heading: float = 1.0      # heading correction gain while driving
+    k_theta: float = 2.0        # rotation gain for in-place turns (only when spin_lead = 0)
     dist_tol: float = 0.02      # m
-    angle_tol: float = 0.05     # rad
+    angle_tol: float = 0.15     # rad; in-place turns can't do finer than ~15 deg steps
     pause_time: float = 0.5     # s, stop at each waypoint (makes the video easy to read)
     allow_reverse: bool = False  # drive backwards when it needs less rotation
+    # In-place turns run at full spin_cmd and stop early: the rover reacts ~0.18 s late,
+    # so it keeps turning ~23 deg after the stop command (measured 21-26 deg).
+    # spin_lead = 0 switches back to a proportional turn.
+    spin_lead: float = 0.40     # rad, stop spinning when this close to the target
+    spin_settle: float = 0.5    # s, wait after a spin before checking the heading again
+    spin_min_time: float = 0.1  # s, shortest spin (~15 deg) so a correction actually moves
+    max_spin_tries: int = 5     # spins per turn before accepting the remaining error
 
 
 class Phase(Enum):
@@ -148,6 +164,7 @@ class WaypointController:
         self.phase = Phase.ROTATE_TO_PATH
         self._segment = None  # (travel heading, direction +1/-1) of the current segment
         self._pause_left = 0.0
+        self._spin = self._new_spin()
 
     @property
     def done(self):
@@ -172,16 +189,16 @@ class WaypointController:
 
             if self.phase == Phase.ROTATE_TO_PATH:
                 if dist < p.dist_tol:
-                    self.phase = Phase.ROTATE_TO_GOAL
+                    self._enter(Phase.ROTATE_TO_GOAL)
                     continue
                 if self._segment is None:
                     self._segment = self._plan_segment(theta, math.atan2(dy, dx), gtheta)
                 heading, _ = self._segment
-                err = wrap_angle(heading - theta)
-                if abs(err) < p.angle_tol:
-                    self.phase = Phase.DRIVE
+                w = self._rotate(wrap_angle(heading - theta), dt)
+                if w is None:
+                    self._enter(Phase.DRIVE)
                     continue
-                return 0.0, self._turn_rate(err)
+                return 0.0, w
 
             if self.phase == Phase.DRIVE:
                 heading, direction = self._segment
@@ -189,7 +206,7 @@ class WaypointController:
                 travel = heading if direction > 0 else wrap_angle(heading + math.pi)
                 along = dx * math.cos(travel) + dy * math.sin(travel)
                 if along <= 0.0:
-                    self.phase = Phase.ROTATE_TO_GOAL
+                    self._enter(Phase.ROTATE_TO_GOAL)
                     continue
                 # Aim at the goal while far away; near it the bearing gets noisy, hold the line.
                 if dist > 0.1:
@@ -204,14 +221,14 @@ class WaypointController:
                 return direction * speed, w
 
             if self.phase == Phase.ROTATE_TO_GOAL:
-                err = wrap_angle(gtheta - theta)
-                if abs(err) < p.angle_tol:
+                w = self._rotate(wrap_angle(gtheta - theta), dt)
+                if w is None:
                     if self.on_reached:
                         self.on_reached(self.index, self.goal, pose)
                     self._pause_left = p.pause_time
-                    self.phase = Phase.PAUSE
+                    self._enter(Phase.PAUSE)
                     continue
-                return 0.0, self._turn_rate(err)
+                return 0.0, w
 
             if self.phase == Phase.PAUSE:
                 if self._pause_left > 0.0:
@@ -219,9 +236,40 @@ class WaypointController:
                     return 0.0, 0.0
                 self.index += 1
                 self._segment = None
-                self.phase = Phase.DONE if self.index >= len(self.waypoints) \
-                    else Phase.ROTATE_TO_PATH
+                self._enter(Phase.DONE if self.index >= len(self.waypoints)
+                            else Phase.ROTATE_TO_PATH)
                 continue
+
+    def _enter(self, phase):
+        self.phase = phase
+        self._spin = self._new_spin()
+
+    @staticmethod
+    def _new_spin():
+        # direction: 0 = not spinning, +1/-1 = spinning CCW/CW
+        return {'direction': 0, 'elapsed': 0.0, 'settle': 0.0, 'tries': 0}
+
+    def _rotate(self, err, dt):
+        """Return w for an in-place turn that reduces err, or None once aligned."""
+        p = self.params
+        if p.spin_lead <= 0.0:
+            return None if abs(err) < p.angle_tol else self._turn_rate(err)
+
+        s = self._spin
+        if s['settle'] > 0.0:
+            s['settle'] -= dt
+            return 0.0
+        if s['direction'] == 0:
+            if abs(err) < p.angle_tol or s['tries'] >= p.max_spin_tries:
+                return None
+            s.update(direction=1 if err > 0 else -1, elapsed=0.0, tries=s['tries'] + 1)
+        # Full-speed spin (the model maps a pure rotation to spin_cmd), stopped spin_lead
+        # early because the robot keeps turning after the stop command.
+        s['elapsed'] += dt
+        if s['direction'] * err <= p.spin_lead and s['elapsed'] >= p.spin_min_time:
+            s.update(direction=0, settle=p.spin_settle)
+            return 0.0
+        return s['direction'] * p.max_w
 
     def _plan_segment(self, theta, bearing, gtheta):
         """Choose forward or reverse driving; return (robot heading while driving, direction)."""

@@ -1,7 +1,9 @@
 """ROS 2 node that drives the rover through a list of waypoints.
 
 Subscribes to imu_data (heading) and publishes [L, R] on motor_commands at a fixed rate.
-Position is dead-reckoned from the executed commands, heading comes from the IMU yaw.
+Position is dead-reckoned from the executed commands. Heading comes from integrating the
+gyro z rate by default; the IMU's own yaw was measured to be unreliable on this rover
+(hand-turning 90 deg reported +24 / -40 deg, while the gyro integral gave 91 deg).
 
 Example:
   ros2 run robot_control velocity_control --ros-args \
@@ -35,8 +37,14 @@ class VelocityControlNode(Node):
         self.declare_parameter('waypoints_file', 'homework1/waypoints.txt')
         self.declare_parameter('rate_hz', 20.0)
         self.declare_parameter('use_imu', True)
-        # Set to -1.0 if the IMU yaw increases when the robot turns clockwise.
+        # 'gyro': integrate angular_velocity.z; 'imu_yaw': use the orientation quaternion.
+        self.declare_parameter('heading_source', 'gyro')
+        # Set to -1.0 if the heading increases when the robot turns clockwise.
         self.declare_parameter('imu_yaw_sign', 1.0)
+        # Converts angular_velocity.z to rad/s. motor_control passes the raw value (deg/s).
+        self.declare_parameter('gyro_scale', math.pi / 180.0)
+        # Seconds of standing still at startup used to measure the gyro bias.
+        self.declare_parameter('gyro_bias_time', 2.0)
         self.declare_parameter('imu_timeout', 0.5)
         # Model and controller parameters share their dataclass field names.
         for name, default in {**asdict(DiffDriveModel()), **asdict(ControllerParams())}.items():
@@ -45,8 +53,13 @@ class VelocityControlNode(Node):
         path = os.path.expanduser(self.get_parameter('waypoints_file').value)
         waypoints = load_waypoints(path)
         self.use_imu = self.get_parameter('use_imu').value
+        self.heading_source = self.get_parameter('heading_source').value
         self.imu_yaw_sign = self.get_parameter('imu_yaw_sign').value
+        self.gyro_scale = self.get_parameter('gyro_scale').value
+        self.gyro_bias_time = self.get_parameter('gyro_bias_time').value
         self.imu_timeout = self.get_parameter('imu_timeout').value
+        if self.heading_source not in ('gyro', 'imu_yaw'):
+            raise ValueError(f'heading_source must be gyro or imu_yaw, got {self.heading_source}')
 
         self.model = DiffDriveModel(**self._params_for(DiffDriveModel))
         params = ControllerParams(**self._params_for(ControllerParams))
@@ -55,9 +68,13 @@ class VelocityControlNode(Node):
         self.estimator = PoseEstimator(self.start_pose)
         self.controller = WaypointController(waypoints, params, on_reached=self._on_reached)
 
-        self.imu_yaw = None
+        self.heading = None  # becomes available once the IMU (and gyro bias) is ready
         self.yaw_offset = None
         self.imu_time = None
+        self.last_stamp = None
+        self.gyro_bias = None
+        self.bias_samples = []
+        self.bias_start = None
         self.last_cmd = (0.0, 0.0)
         self.finished_logged = False
 
@@ -74,13 +91,34 @@ class VelocityControlNode(Node):
         return {name: self.get_parameter(name).value for name in asdict(cls())}
 
     def _imu_callback(self, msg):
-        yaw = self.imu_yaw_sign * quaternion_to_yaw(msg.orientation)
-        if self.yaw_offset is None:
-            # Align the IMU frame with the waypoint frame using the start heading.
-            self.yaw_offset = self.start_pose[2] - yaw
-            self.get_logger().info(f'IMU initial yaw {math.degrees(yaw):.1f} deg')
-        self.imu_yaw = wrap_angle(yaw + self.yaw_offset)
         self.imu_time = self.get_clock().now()
+        if self.heading_source == 'imu_yaw':
+            yaw = self.imu_yaw_sign * quaternion_to_yaw(msg.orientation)
+            if self.yaw_offset is None:
+                # Align the IMU frame with the waypoint frame using the start heading.
+                self.yaw_offset = self.start_pose[2] - yaw
+                self.get_logger().info(f'IMU initial yaw {math.degrees(yaw):.1f} deg')
+            self.heading = wrap_angle(yaw + self.yaw_offset)
+            return
+
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        gz = msg.angular_velocity.z
+        if self.gyro_bias is None:
+            # The robot is standing still: average the gyro reading to get its bias.
+            if self.bias_start is None:
+                self.bias_start = stamp
+                self.get_logger().info(
+                    f'Measuring gyro bias for {self.gyro_bias_time:.1f} s, keep the robot still')
+            self.bias_samples.append(gz)
+            if stamp - self.bias_start >= self.gyro_bias_time:
+                self.gyro_bias = sum(self.bias_samples) / len(self.bias_samples)
+                self.heading = self.start_pose[2]
+                self.get_logger().info(f'Gyro bias {self.gyro_bias:+.3f} '
+                                       f'({len(self.bias_samples)} samples)')
+        else:
+            rate = self.imu_yaw_sign * (gz - self.gyro_bias) * self.gyro_scale
+            self.heading = wrap_angle(self.heading + rate * (stamp - self.last_stamp))
+        self.last_stamp = stamp
 
     def _tick(self):
         now = self.get_clock().now()
@@ -91,16 +129,17 @@ class VelocityControlNode(Node):
         self.estimator.predict(*self.model.cmds_to_twist(*self.last_cmd), dt)
 
         if self.use_imu:
-            if self.imu_time is None:
+            if self.heading is None:
                 self._publish(0.0, 0.0)
-                self.get_logger().info('Waiting for imu_data...', throttle_duration_sec=2.0)
+                self.get_logger().info('Waiting for imu_data / gyro bias...',
+                                       throttle_duration_sec=2.0)
                 return
             if (now - self.imu_time).nanoseconds * 1e-9 > self.imu_timeout:
                 self._publish(0.0, 0.0)
                 self.get_logger().warn('IMU data is stale, holding still',
                                        throttle_duration_sec=1.0)
                 return
-            self.estimator.set_heading(self.imu_yaw)
+            self.estimator.set_heading(self.heading)
 
         v, w = self.controller.update(self.estimator.pose, dt)
         self._publish(*self.model.twist_to_cmds(v, w))
