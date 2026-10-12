@@ -43,8 +43,14 @@ class VelocityControlNode(Node):
         self.declare_parameter('imu_yaw_sign', 1.0)
         # Converts angular_velocity.z to rad/s. motor_control passes the raw value (deg/s).
         self.declare_parameter('gyro_scale', math.pi / 180.0)
-        # Seconds of standing still at startup used to measure the gyro bias.
-        self.declare_parameter('gyro_bias_time', 3.0)
+        # Seconds of standing still at startup used to measure the gyro bias. The gyro is
+        # noisy (std ~3.3 deg/s at rest), a 2 s average was off by up to 0.5 deg/s.
+        self.declare_parameter('gyro_bias_time', 5.0)
+        # Zero-velocity update: once the commands have been zero for zupt_delay seconds the
+        # robot is at rest, so the heading is frozen and the bias is refined (time constant
+        # zupt_tau). The bias drifts by a few tenths of a deg/s over a run.
+        self.declare_parameter('zupt_delay', 0.5)
+        self.declare_parameter('zupt_tau', 5.0)
         self.declare_parameter('imu_timeout', 0.5)
         # Model and controller parameters share their dataclass field names.
         for name, default in {**asdict(DiffDriveModel()), **asdict(ControllerParams())}.items():
@@ -57,6 +63,8 @@ class VelocityControlNode(Node):
         self.imu_yaw_sign = self.get_parameter('imu_yaw_sign').value
         self.gyro_scale = self.get_parameter('gyro_scale').value
         self.gyro_bias_time = self.get_parameter('gyro_bias_time').value
+        self.zupt_delay = self.get_parameter('zupt_delay').value
+        self.zupt_tau = self.get_parameter('zupt_tau').value
         self.imu_timeout = self.get_parameter('imu_timeout').value
         if self.heading_source not in ('gyro', 'imu_yaw'):
             raise ValueError(f'heading_source must be gyro or imu_yaw, got {self.heading_source}')
@@ -76,6 +84,7 @@ class VelocityControlNode(Node):
         self.bias_samples = []
         self.bias_start = None
         self.last_cmd = (0.0, 0.0)
+        self.zero_cmd_since = self.get_clock().now()  # None while the motors are commanded
         self.finished = False
 
         self.cmd_pub = self.create_publisher(Float32MultiArray, 'motor_commands', 10)
@@ -119,9 +128,18 @@ class VelocityControlNode(Node):
                 self.get_logger().info(f'Gyro bias {self.gyro_bias:+.3f}, std {std:.3f} '
                                        f'({n} samples)')
         else:
-            rate = self.imu_yaw_sign * (gz - self.gyro_bias) * self.gyro_scale
-            self.heading = wrap_angle(self.heading + rate * (stamp - self.last_stamp))
+            dt = stamp - self.last_stamp
+            if self._at_rest():
+                self.gyro_bias += (gz - self.gyro_bias) * min(1.0, dt / self.zupt_tau)
+            else:
+                rate = self.imu_yaw_sign * (gz - self.gyro_bias) * self.gyro_scale
+                self.heading = wrap_angle(self.heading + rate * dt)
         self.last_stamp = stamp
+
+    def _at_rest(self):
+        if self.zero_cmd_since is None:
+            return False
+        return (self.get_clock().now() - self.zero_cmd_since).nanoseconds * 1e-9 > self.zupt_delay
 
     def _tick(self):
         now = self.get_clock().now()
@@ -161,9 +179,14 @@ class VelocityControlNode(Node):
     def _on_reached(self, index, goal, pose):
         self.get_logger().info(
             f'Reached waypoint {index}: goal=({goal[0]:.2f}, {goal[1]:.2f}, {goal[2]:.2f}) '
-            f'estimated=({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f})')
+            f'estimated=({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f}) '
+            f'gyro bias {self.gyro_bias if self.gyro_bias is not None else float("nan"):+.3f}')
 
     def _publish(self, left, right):
+        if left != 0.0 or right != 0.0:
+            self.zero_cmd_since = None
+        elif self.zero_cmd_since is None:
+            self.zero_cmd_since = self.get_clock().now()
         self.last_cmd = (left, right)
         msg = Float32MultiArray()
         msg.data = [float(left), float(right)]

@@ -135,7 +135,7 @@ class ControllerParams:
     k_theta: float = 2.0        # rotation gain for in-place turns (only when spin_lead = 0)
     dist_tol: float = 0.02      # m
     angle_tol: float = 0.15     # rad; in-place turns can't do finer than ~15 deg steps
-    pause_time: float = 0.5     # s, stop at each waypoint (makes the video easy to read)
+    pause_time: float = 1.0     # s, stop at each waypoint (video, and gyro bias updates)
     allow_reverse: bool = False  # drive backwards when it needs less rotation
     # In-place turns run at full spin_cmd and stop early: the rover reacts ~0.18 s late,
     # so it keeps turning ~23 deg after the stop command (measured 21-26 deg).
