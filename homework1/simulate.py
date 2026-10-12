@@ -38,9 +38,13 @@ def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, 
     true_pose = waypoints[0]
     estimator = PoseEstimator(waypoints[0])
     reached = []
+    # The robot is still moving for `delay` after the controller reports a waypoint, so the
+    # true pose is recorded that much later: [steps left, entry index].
+    to_record = []
 
     def on_reached(index, goal, est_pose):
-        reached.append((index, goal, est_pose, true_pose))
+        reached.append((index, goal, est_pose, None))
+        to_record.append([round(delay / dt) + 1, len(reached) - 1])
 
     controller = WaypointController(waypoints, params, on_reached=on_reached)
     log = {'t': [], 'true': [], 'est': [], 'left': [], 'right': []}
@@ -53,6 +57,12 @@ def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, 
         pending.append(cmd)
         true_pose = integrate_pose(true_pose, *truth.cmds_to_twist(*pending.popleft()), dt)
         estimator.predict(*model.cmds_to_twist(*cmd), dt)
+        for item in to_record:
+            item[0] -= 1
+            if item[0] == 0:
+                i = item[1]
+                reached[i] = reached[i][:3] + (true_pose,)
+        to_record[:] = [item for item in to_record if item[0] > 0]
         if use_imu:
             estimator.set_heading(true_pose[2] + rng.gauss(0.0, imu_noise))
         v, w = controller.update(estimator.pose, dt)
@@ -64,6 +74,8 @@ def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, 
         log['left'].append(cmd[0])
         log['right'].append(cmd[1])
         t += dt
+    for _, i in to_record:
+        reached[i] = reached[i][:3] + (true_pose,)
     return log, reached, controller.done
 
 

@@ -122,7 +122,13 @@ class PoseEstimator:
 @dataclass
 class ControllerParams:
     max_v: float = 0.2          # m/s, cruise speed
-    min_v: float = 0.05         # m/s, slowest speed while approaching a waypoint
+    # Slowest speed while approaching a waypoint. Kept at max_v: lower commands sit near the
+    # 0.07 deadband where the robot moves slower than the linear model predicts, so it
+    # stopped short. The 0.18 s actuation delay cancels out (late start, late stop).
+    min_v: float = 0.2
+    # Limits steering while driving so both wheels keep turning forward; a reversed wheel at
+    # low command is a slow in-place turn, which stalls on our floor.
+    max_curvature: float = 1.5  # 1/m
     max_w: float = 1.5          # rad/s
     k_rho: float = 1.0          # forward speed gain on remaining distance
     k_heading: float = 1.0      # heading correction gain while driving
@@ -215,9 +221,15 @@ class WaypointController:
                 else:
                     target = heading
                 err = wrap_angle(target - theta)
+                if math.cos(err) <= 0.0:
+                    # Facing away from the goal: steering can't fix it, turn in place again.
+                    self._segment = None
+                    self._enter(Phase.ROTATE_TO_PATH)
+                    continue
                 speed = min(p.max_v, max(p.min_v, p.k_rho * along))
                 speed *= max(0.0, math.cos(err))  # slow down when badly misaligned
-                w = max(-p.max_w, min(p.max_w, p.k_heading * err))
+                w_limit = min(p.max_w, p.max_curvature * speed)
+                w = max(-w_limit, min(w_limit, p.k_heading * err))
                 return direction * speed, w
 
             if self.phase == Phase.ROTATE_TO_GOAL:
