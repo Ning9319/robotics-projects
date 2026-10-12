@@ -132,16 +132,28 @@ class ControllerParams:
     max_curvature: float = 1.5  # 1/m
     max_w: float = 1.5          # rad/s
     k_rho: float = 1.0          # forward speed gain on remaining distance
-    k_heading: float = 1.0      # heading correction gain while driving
+    # Heading correction gain while driving. Small wheel speed differences barely steer the
+    # skid-steer rover (at 1.0 it kept drifting against the correction), so it is high.
+    k_heading: float = 3.0
+    # Aim at the goal while farther than aim_dist; closer, hold the segment heading because
+    # the bearing swings wildly when passing next to the goal.
+    aim_dist: float = 0.2       # m
+    # Driving facing away from the goal (> 90 deg off) triggers a new in-place turn, but only
+    # farther than replan_dist; closer, the miss is accepted instead of spinning around.
+    replan_dist: float = 0.25   # m
     k_theta: float = 2.0        # rotation gain for in-place turns (only when spin_lead = 0)
     dist_tol: float = 0.02      # m
     angle_tol: float = 0.15     # rad; in-place turns can't do finer than ~15 deg steps
     pause_time: float = 1.0     # s, stop at each waypoint (video, and gyro bias updates)
     allow_reverse: bool = False  # drive backwards when it needs less rotation
     # In-place turns run at full spin_cmd and stop early: the rover reacts ~0.18 s late,
-    # so it keeps turning ~23 deg after the stop command (measured 21-26 deg).
+    # so it keeps turning after the stop command. Measured 21-26 deg at 110 deg/s, but
+    # 28-36 deg on another day at 175 deg/s, so the lead adapts: after each spin it moves
+    # spin_lead_gain of the way toward the coast that was just measured.
     # spin_lead = 0 switches back to a proportional turn.
-    spin_lead: float = 0.40     # rad, stop spinning when this close to the target
+    spin_lead: float = 0.45     # rad, initial: stop spinning when this close to the target
+    spin_lead_gain: float = 0.5  # 0 keeps spin_lead fixed
+    spin_adapt_time: float = 0.3  # s, only spins at least this long update the lead
     spin_settle: float = 0.5    # s, wait after a spin before checking the heading again
     spin_min_time: float = 0.1  # s, shortest spin (~15 deg) so a correction actually moves
     max_spin_tries: int = 5     # spins per turn before accepting the remaining error
@@ -172,6 +184,7 @@ class WaypointController:
         self._segment = None  # (travel heading, direction +1/-1) of the current segment
         self._pause_left = 0.0
         self._spin = self._new_spin()
+        self.spin_lead = self.params.spin_lead  # adapted after every spin
 
     @property
     def done(self):
@@ -215,17 +228,20 @@ class WaypointController:
                 if along <= 0.0:
                     self._enter(Phase.ROTATE_TO_GOAL)
                     continue
-                # Aim at the goal while far away; near it the bearing gets noisy, hold the line.
-                if dist > 0.1:
+                if dist > p.aim_dist:
                     bearing = math.atan2(dy, dx)
                     target = bearing if direction > 0 else wrap_angle(bearing + math.pi)
                 else:
                     target = heading
                 err = wrap_angle(target - theta)
                 if math.cos(err) <= 0.0:
-                    # Facing away from the goal: steering can't fix it, turn in place again.
-                    self._segment = None
-                    self._enter(Phase.ROTATE_TO_PATH)
+                    # Facing away from the goal: steering can't fix it. Far away, turn in
+                    # place again; close by, accept the miss and finish the waypoint.
+                    if dist > p.replan_dist:
+                        self._segment = None
+                        self._enter(Phase.ROTATE_TO_PATH)
+                    else:
+                        self._enter(Phase.ROTATE_TO_GOAL)
                     continue
                 speed = min(p.max_v, max(p.min_v, p.k_rho * along))
                 speed *= max(0.0, math.cos(err))  # slow down when badly misaligned
@@ -273,14 +289,22 @@ class WaypointController:
             s['settle'] -= dt
             return 0.0
         if s['direction'] == 0:
+            if 'stop_dir' in s:
+                # The robot has settled: how far did it turn after the stop command? Only
+                # spins that reached full speed count; short correction pulses coast less.
+                coast = s.pop('stop_remaining') - s.pop('stop_dir') * err
+                if s.pop('stop_elapsed') >= p.spin_adapt_time:
+                    self.spin_lead += p.spin_lead_gain * (coast - self.spin_lead)
+                    self.spin_lead = min(1.0, max(0.1, self.spin_lead))
             if abs(err) < p.angle_tol or s['tries'] >= p.max_spin_tries:
                 return None
             s.update(direction=1 if err > 0 else -1, elapsed=0.0, tries=s['tries'] + 1)
         # Full-speed spin (the model maps a pure rotation to spin_cmd), stopped spin_lead
         # early because the robot keeps turning after the stop command.
         s['elapsed'] += dt
-        if s['direction'] * err <= p.spin_lead and s['elapsed'] >= p.spin_min_time:
-            s.update(direction=0, settle=p.spin_settle)
+        if s['direction'] * err <= self.spin_lead and s['elapsed'] >= p.spin_min_time:
+            s.update(direction=0, settle=p.spin_settle, stop_dir=s['direction'],
+                     stop_remaining=s['direction'] * err, stop_elapsed=s['elapsed'])
             return 0.0
         return s['direction'] * p.max_w
 
