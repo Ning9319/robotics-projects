@@ -94,6 +94,7 @@ class CalibrationNode(Node):
         self.spin_for(0.5)  # settle
         gyro_start, yaw_start = self.gyro_angle, self.imu_yaw
         self.msg_count = 0
+        self.samples = []
         t0 = time.monotonic()
         self.spin_for(duration, cmd)
         gyro_at_stop = self.gyro_angle
@@ -104,6 +105,12 @@ class CalibrationNode(Node):
         # Rotation after the zero command was sent: the controller must stop this much early.
         print(f'  during command: {math.degrees(gyro_at_stop - gyro_start):+.1f} deg, '
               f'after stop (coast): {math.degrees(self.gyro_angle - gyro_at_stop):+.1f} deg')
+        # Raw gz statistics: single huge values are glitches that corrupt the integral.
+        n = len(self.samples)
+        mean = sum(self.samples) / n
+        std = math.sqrt(sum((s - mean) ** 2 for s in self.samples) / n)
+        print(f'  gz: min {min(self.samples):+.1f}, max {max(self.samples):+.1f}, '
+              f'std {std:.2f}, mean {mean:+.2f} (IMU units, {n} samples)')
         return self.gyro_angle - gyro_start
 
 
@@ -127,7 +134,7 @@ def main():
                         help='result of the straight calibration, used to compute wheel_base')
     parser.add_argument('--gyro-scale', type=float, default=math.pi / 180.0,
                         help='angular_velocity.z to rad/s (default: the IMU reports deg/s)')
-    parser.add_argument('--bias-time', type=float, default=2.0)
+    parser.add_argument('--bias-time', type=float, default=5.0)
     args = parser.parse_args()
     c = min(abs(args.cmd), 0.5)
     cmd = (c, c) if args.mode == 'straight' else (-c, c)
