@@ -58,14 +58,18 @@ class DiffDriveModel:
     min_cmd: float = 0.07
     # motor_control clips commands to +-0.5.
     max_cmd: float = 0.5
-    # In-place turns stall below ~0.5 on our floor (cmd 0.4 turned 84 deg in 1 s, then
-    # stuck), so a pure rotation always uses this command. 0 disables it.
-    spin_cmd: float = 0.5
+    # A pure rotation uses at least this command; smaller ones don't turn the skid-steer
+    # rover reliably. 0.4 sometimes sticks (the controller then boosts toward 0.5) and 0.5
+    # spins violently on a smooth floor (175 deg/s). 0 disables it.
+    spin_cmd: float = 0.4
 
     def twist_to_cmds(self, v, w):
         """Convert body velocity (m/s, rad/s) to (left, right) motor commands."""
         if v == 0.0 and w != 0.0 and self.spin_cmd > 0.0:
-            spin = math.copysign(self.spin_cmd, w)
+            # At least spin_cmd; a larger w (the controller boosting a stalled spin) maps to
+            # a larger command through the linear model, up to max_cmd.
+            linear = abs(w) * self.wheel_base / 2 / self.speed_per_cmd
+            spin = math.copysign(min(self.max_cmd, max(self.spin_cmd, linear)), w)
             return -spin, spin
         left =(v - w * self.wheel_base / 2) / (self.speed_per_cmd * self.left_trim)
         right = (v + w * self.wheel_base / 2) / (self.speed_per_cmd * self.right_trim)
@@ -154,9 +158,18 @@ class ControllerParams:
     spin_lead: float = 0.45     # rad, initial: stop spinning when this close to the target
     spin_lead_gain: float = 0.5  # 0 keeps spin_lead fixed
     spin_adapt_time: float = 0.3  # s, only spins at least this long update the lead
+    # Turns are done in short steps: spin at most spin_max_time, stop, wait spin_settle, then
+    # decide from the gyro. On one run the rover spun for 8 s while the integrated gyro
+    # barely moved, then jumped (late or stuck IMU data), so the controller must never keep
+    # spinning on live gyro data alone.
+    spin_max_time: float = 0.6      # s, ~50-100 deg at cmd 0.4
+    max_spin_tries: int = 8         # steps per turn before accepting the remaining error
+    # A step that turned less than spin_stall_angle stalled (stick-slip); the spin command is
+    # then boosted by spin_boost_step, kept for later turns and decaying after good steps.
+    spin_stall_angle: float = 0.1   # rad (~6 deg)
+    spin_boost_step: float = 1.25
     spin_settle: float = 0.8    # s, wait after a spin (until the robot has stopped turning)
     spin_min_time: float = 0.1  # s, shortest spin (~15 deg) so a correction actually moves
-    max_spin_tries: int = 5     # spins per turn before accepting the remaining error
 
 
 class Phase(Enum):
@@ -185,6 +198,7 @@ class WaypointController:
         self._pause_left = 0.0
         self._spin = self._new_spin()
         self.spin_lead = self.params.spin_lead  # adapted after every spin
+        self.spin_boost = 1.0  # multiplies the spin rate request when spins stall
 
     @property
     def done(self):
@@ -290,23 +304,33 @@ class WaypointController:
             return 0.0
         if s['direction'] == 0:
             if 'stop_dir' in s:
-                # The robot has settled: how far did it turn after the stop command? Only
-                # spins that reached full speed count; short correction pulses coast less.
-                coast = s.pop('stop_remaining') - s.pop('stop_dir') * err
+                # The robot has settled after a step and the gyro has caught up: evaluate it.
+                # Short correction pulses (< spin_adapt_time) don't reach full speed, skip them.
+                d = s.pop('stop_dir')
+                turned = s.pop('start_remaining') - d * err  # toward the target, whole step
+                coast = s.pop('stop_remaining') - d * err    # after the stop command
                 if s.pop('stop_elapsed') >= p.spin_adapt_time:
-                    self.spin_lead += p.spin_lead_gain * (coast - self.spin_lead)
-                    self.spin_lead = min(1.0, max(0.1, self.spin_lead))
+                    if turned < p.spin_stall_angle:
+                        self.spin_boost = min(2.0, self.spin_boost * p.spin_boost_step)
+                    else:
+                        self.spin_boost = max(1.0, self.spin_boost * 0.95)
+                        self.spin_lead += p.spin_lead_gain * (coast - self.spin_lead)
+                        self.spin_lead = min(1.0, max(0.1, self.spin_lead))
             if abs(err) < p.angle_tol or s['tries'] >= p.max_spin_tries:
                 return None
-            s.update(direction=1 if err > 0 else -1, elapsed=0.0, tries=s['tries'] + 1)
+            direction = 1 if err > 0 else -1
+            s.update(direction=direction, elapsed=0.0, tries=s['tries'] + 1,
+                     start_remaining=direction * err)
         # Full-speed spin (the model maps a pure rotation to spin_cmd), stopped spin_lead
-        # early because the robot keeps turning after the stop command.
+        # early because the robot keeps turning after the stop command, and never longer
+        # than spin_max_time.
         s['elapsed'] += dt
-        if s['direction'] * err <= self.spin_lead and s['elapsed'] >= p.spin_min_time:
+        close_enough = s['direction'] * err <= self.spin_lead and s['elapsed'] >= p.spin_min_time
+        if close_enough or s['elapsed'] >= p.spin_max_time:
             s.update(direction=0, settle=p.spin_settle, stop_dir=s['direction'],
                      stop_remaining=s['direction'] * err, stop_elapsed=s['elapsed'])
             return 0.0
-        return s['direction'] * p.max_w
+        return s['direction'] * p.max_w * self.spin_boost
 
     def _plan_segment(self, theta, bearing, gtheta):
         """Choose forward or reverse driving; return (robot heading while driving, direction)."""

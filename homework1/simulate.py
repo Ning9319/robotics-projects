@@ -33,7 +33,8 @@ BLUE, ORANGE, AQUA = '#2a78d6', '#eb6834', '#1baf7a'
 INK, MUTED, GRID = '#1f1f1e', '#6b6a64', '#e4e3dd'
 
 
-def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, seed, delay):
+def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, seed, delay,
+             imu_delay=0.0):
     rng = random.Random(seed)
     true_pose = waypoints[0]
     estimator = PoseEstimator(waypoints[0])
@@ -51,6 +52,8 @@ def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, 
     cmd = (0.0, 0.0)
     # The real rover reacts ~0.18 s after a command (measured in spin calibration).
     pending = deque([(0.0, 0.0)] * round(delay / dt))
+    # Heading measurements can also arrive late (IMU data passes through serial and ROS).
+    headings = deque([waypoints[0][2]] * round(imu_delay / dt))
     t = 0.0
     while not controller.done and t < max_time:
         # Same order as the ROS node: propagate with last command, read IMU, compute control.
@@ -64,7 +67,8 @@ def simulate(waypoints, model, truth, params, use_imu, imu_noise, dt, max_time, 
                 reached[i] = reached[i][:3] + (true_pose,)
         to_record[:] = [item for item in to_record if item[0] > 0]
         if use_imu:
-            estimator.set_heading(true_pose[2] + rng.gauss(0.0, imu_noise))
+            headings.append(true_pose[2])
+            estimator.set_heading(headings.popleft() + rng.gauss(0.0, imu_noise))
         v, w = controller.update(estimator.pose, dt)
         cmd = model.twist_to_cmds(v, w)
 
@@ -149,6 +153,8 @@ def main():
     parser.add_argument('--dt', type=float, default=0.05)
     parser.add_argument('--delay', type=float, default=0.18,
                         help='actuation delay of the simulated robot (s)')
+    parser.add_argument('--imu-delay', type=float, default=0.0,
+                        help='latency of the heading measurement (s)')
     parser.add_argument('--max-time', type=float, default=180.0)
     parser.add_argument('--seed', type=int, default=0)
     args = parser.parse_args()
@@ -162,7 +168,7 @@ def main():
 
     log, reached, finished = simulate(waypoints, model, truth, params, not args.no_imu,
                                       args.imu_noise, args.dt, args.max_time, args.seed,
-                                      args.delay)
+                                      args.delay, args.imu_delay)
 
     print(f'{"finished" if finished else "TIMED OUT"} in {log["t"][-1]:.1f} s')
     print(f'{"wp":>3} {"goal (x, y, th)":>22} {"true (x, y, th)":>22} {"pos err":>8} {"th err":>7}')

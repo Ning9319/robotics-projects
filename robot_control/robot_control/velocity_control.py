@@ -186,7 +186,8 @@ class VelocityControlNode(Node):
             f'Reached waypoint {index}: goal=({goal[0]:.2f}, {goal[1]:.2f}, {goal[2]:.2f}) '
             f'estimated=({pose[0]:.2f}, {pose[1]:.2f}, {pose[2]:.2f}) '
             f'gyro bias {self.gyro_bias if self.gyro_bias is not None else float("nan"):+.3f} '
-            f'spin lead {math.degrees(self.controller.spin_lead):.0f} deg')
+            f'spin lead {math.degrees(self.controller.spin_lead):.0f} deg '
+            f'spin boost {self.controller.spin_boost:.2f}')
 
     def _publish(self, left, right):
         if left != 0.0 or right != 0.0:

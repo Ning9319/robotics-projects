@@ -42,6 +42,7 @@ class CalibrationNode(Node):
         self.last_yaw = None
         self.last_stamp = None
         self.samples = []      # raw gz values, used while measuring the bias
+        self.trace = []        # (arrival time, gz) during a run, for latency checks
         self.msg_count = 0
 
     def _imu_callback(self, msg):
@@ -57,6 +58,7 @@ class CalibrationNode(Node):
             self.gyro_angle += (gz - self.gyro_bias) * self.gyro_scale * (stamp - self.last_stamp)
         self.last_stamp = stamp
         self.samples.append(gz)
+        self.trace.append((time.monotonic(), gz))
         self.msg_count += 1
 
     def publish(self, left, right):
@@ -95,6 +97,7 @@ class CalibrationNode(Node):
         gyro_start, yaw_start = self.gyro_angle, self.imu_yaw
         self.msg_count = 0
         self.samples = []
+        self.trace = []
         t0 = time.monotonic()
         self.spin_for(duration, cmd)
         gyro_at_stop = self.gyro_angle
@@ -111,6 +114,15 @@ class CalibrationNode(Node):
         std = math.sqrt(sum((s - mean) ** 2 for s in self.samples) / n)
         print(f'  gz: min {min(self.samples):+.1f}, max {max(self.samples):+.1f}, '
               f'std {std:.2f}, mean {mean:+.2f} (IMU units, {n} samples)')
+        # Late data: time from the first command until the gyro shows clear rotation.
+        moving = [t for t, g in self.trace if abs(g - self.gyro_bias) > 20.0]
+        delay = f'{moving[0] - t0:.2f} s' if moving else 'never'
+        # Stuck data: the noisy gyro should practically never repeat the same value.
+        streak = longest = 1
+        for (_, a), (_, b) in zip(self.trace, self.trace[1:]):
+            streak = streak + 1 if a == b else 1
+            longest = max(longest, streak)
+        print(f'  gyro response delay {delay}, longest run of identical gz values {longest}')
         return self.gyro_angle - gyro_start
 
 
