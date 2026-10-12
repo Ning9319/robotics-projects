@@ -46,11 +46,15 @@ class VelocityControlNode(Node):
         # Seconds of standing still at startup used to measure the gyro bias. The gyro is
         # noisy (std ~3.3 deg/s at rest), a 2 s average was off by up to 0.5 deg/s.
         self.declare_parameter('gyro_bias_time', 5.0)
-        # Zero-velocity update: once the commands have been zero for zupt_delay seconds the
-        # robot is at rest, so the heading is frozen and the bias is refined (time constant
-        # zupt_tau). The bias drifts by a few tenths of a deg/s over a run.
-        self.declare_parameter('zupt_delay', 0.5)
+        # Zero-velocity update: once the commands have been zero for zupt_delay seconds and the
+        # gyro reads less than zupt_gyro_threshold (deg/s, after the bias), the robot is at
+        # rest, so the heading is frozen and the bias is refined (time constant zupt_tau).
+        # The bias drifts by a few tenths of a deg/s over a run. The gyro check matters:
+        # after a fast spin the robot can keep turning past zupt_delay, and freezing the
+        # heading then lost that rotation and corrupted the bias.
+        self.declare_parameter('zupt_delay', 0.8)
         self.declare_parameter('zupt_tau', 5.0)
+        self.declare_parameter('zupt_gyro_threshold', 10.0)
         self.declare_parameter('imu_timeout', 0.5)
         # Model and controller parameters share their dataclass field names.
         for name, default in {**asdict(DiffDriveModel()), **asdict(ControllerParams())}.items():
@@ -65,6 +69,7 @@ class VelocityControlNode(Node):
         self.gyro_bias_time = self.get_parameter('gyro_bias_time').value
         self.zupt_delay = self.get_parameter('zupt_delay').value
         self.zupt_tau = self.get_parameter('zupt_tau').value
+        self.zupt_gyro_threshold = self.get_parameter('zupt_gyro_threshold').value
         self.imu_timeout = self.get_parameter('imu_timeout').value
         if self.heading_source not in ('gyro', 'imu_yaw'):
             raise ValueError(f'heading_source must be gyro or imu_yaw, got {self.heading_source}')
@@ -129,7 +134,7 @@ class VelocityControlNode(Node):
                                        f'({n} samples)')
         else:
             dt = stamp - self.last_stamp
-            if self._at_rest():
+            if self._at_rest() and abs(gz - self.gyro_bias) < self.zupt_gyro_threshold:
                 self.gyro_bias += (gz - self.gyro_bias) * min(1.0, dt / self.zupt_tau)
             else:
                 rate = self.imu_yaw_sign * (gz - self.gyro_bias) * self.gyro_scale

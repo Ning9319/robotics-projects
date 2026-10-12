@@ -154,7 +154,7 @@ class ControllerParams:
     spin_lead: float = 0.45     # rad, initial: stop spinning when this close to the target
     spin_lead_gain: float = 0.5  # 0 keeps spin_lead fixed
     spin_adapt_time: float = 0.3  # s, only spins at least this long update the lead
-    spin_settle: float = 0.5    # s, wait after a spin before checking the heading again
+    spin_settle: float = 0.8    # s, wait after a spin (until the robot has stopped turning)
     spin_min_time: float = 0.1  # s, shortest spin (~15 deg) so a correction actually moves
     max_spin_tries: int = 5     # spins per turn before accepting the remaining error
 
