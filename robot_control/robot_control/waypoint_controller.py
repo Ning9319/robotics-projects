@@ -20,12 +20,16 @@ def load_waypoints(path):
 class Model:
     """Differential drive: v = k (L + R) / 2,  w = k (R - L) / W."""
 
+    # Manual Calibration:
     speed_per_cmd: float = 1.35  # k, m/s per unit command
     wheel_base: float = 0.64     # W, effective value for in-place turns
     drive_cmd: float = 0.2
     spin_cmd: float = 0.4
     trim: float = 0.0            # > 0 steers right when driving straight
+    spin_offset: float = 0.0     # deg the robot keeps turning after a spin stops
 
+
+    # Kinematic Model
     def twist(self, left, right):
         v = self.speed_per_cmd * (left + right) / 2
         w = self.speed_per_cmd * (right - left) / self.wheel_base
@@ -49,7 +53,7 @@ def plan(waypoints, model, settle=0.3, pause=1.0):
 
     def turn(angle):
         angle = wrap_angle(angle)
-        duration = abs(angle) / model.spin_rate()
+        duration = (abs(angle) - math.radians(model.spin_offset)) / model.spin_rate()
         if duration > 0.05:
             c = math.copysign(model.spin_cmd, angle)
             steps.append(Step(-c, c, duration, None))

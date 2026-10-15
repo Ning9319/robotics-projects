@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run fixed commands for fixed times, then type in what you measured.
+"""This file is used for calibration on different floors (apartment, grad housing, FAH)
+Run fixed commands for fixed times, then type in what you measured.
 motor_control must be running.
 
   python3 calibrate.py straight --cmd 0.2 --durations 2 2 4 4      # distance in m
