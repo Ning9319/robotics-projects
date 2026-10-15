@@ -27,6 +27,7 @@ class Model:
     spin_cmd: float = 0.4
     trim: float = 0.0            # > 0 steers right when driving straight
     spin_offset: float = 0.0     # deg the robot keeps turning after a spin stops
+    cw_scale: float = 1.0        # clockwise spins last this many times longer
 
 
     # Kinematic Model
@@ -54,6 +55,8 @@ def plan(waypoints, model, settle=0.3, pause=1.0):
     def turn(angle):
         angle = wrap_angle(angle)
         duration = (abs(angle) - math.radians(model.spin_offset)) / model.spin_rate()
+        if angle < 0:
+            duration *= model.cw_scale
         if duration > 0.05:
             c = math.copysign(model.spin_cmd, angle)
             steps.append(Step(-c, c, duration, None))

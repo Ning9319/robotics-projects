@@ -45,7 +45,7 @@ def main():
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             pub.publish(msg)
-            time.sleep(0.05)
+            time.sleep(0.01)
 
     while pub.get_subscription_count() == 0:
         print('waiting for motor_control...')

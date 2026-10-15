@@ -35,7 +35,7 @@ class VelocityControl(Node):
         self.start = None
         self.done = False
         self.pub = self.create_publisher(Float32MultiArray, 'motor_commands', 10)
-        self.create_timer(0.05, self.tick)
+        self.create_timer(0.01, self.tick)
         self.get_logger().info(f'{model}, {len(self.steps)} steps, {t:.1f} s')
 
     def tick(self):

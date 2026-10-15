@@ -87,7 +87,7 @@ class MotorControllerNode(Node):
         self.get_logger().info('Listening for motor commands on topic: motor_commands')
         self.get_logger().info('Publishing IMU data on topic: imu_data')
         self.get_logger().info(f'Safety timeout set to {self.timeout_duration} seconds')
-        self.get_logger().info('Requesting IMU data at 50Hz')
+        self.get_logger().info('Requesting IMU data at 10Hz')
         
     def init_serial(self):
         """initialize serial connection"""
@@ -164,7 +164,7 @@ class MotorControllerNode(Node):
                 except Exception as e:
                     self.get_logger().error(f'Motor command serial write error: {str(e)}')
                     self.init_serial()
-            time.sleep(0.05)  # 20Hz
+            time.sleep(0.02)  # 50Hz, so timed moves are not rounded to 0.05 s
     
     def send_imu_requests(self):
         """send IMU data requests to robot via serial at 50Hz"""
@@ -177,7 +177,7 @@ class MotorControllerNode(Node):
                 except Exception as e:
                     self.get_logger().error(f'IMU request serial write error: {str(e)}')
                     # Don't reinit serial here to avoid conflict with motor thread
-            time.sleep(0.02)  # 50Hz
+            time.sleep(0.1)  # 10Hz, the IMU is not used
     
     def receive_data(self):
         """receive and process data from robot"""
