@@ -73,7 +73,7 @@ def main():
     else:
         rate = math.radians(slope)
         print(f'spin rate {slope:.1f} deg/s (offset {offset:+.1f} deg), '
-              f'wheel_base = {2 * args.speed_per_cmd * args.cmd / rate:.3f}')
+              f'wheel_base = {2 * args.speed_per_cmd * abs(args.cmd) / rate:.3f}')
 
 
 if __name__ == '__main__':

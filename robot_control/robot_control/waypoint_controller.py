@@ -27,7 +27,9 @@ class Model:
     spin_cmd: float = 0.4
     trim: float = 0.0            # > 0 steers right when driving straight
     spin_offset: float = 0.0     # deg the robot keeps turning after a spin stops
-    cw_scale: float = 1.0        # clockwise spins last this many times longer
+    # Clockwise spins are calibrated separately (the two sides are not symmetric).
+    cw_wheel_base: float = 0.0   # 0 = same as wheel_base
+    cw_offset: float = 0.0       # deg
 
 
     # Kinematic Model
@@ -39,8 +41,9 @@ class Model:
     def speed(self):
         return self.twist(self.drive_cmd, self.drive_cmd)[0]
 
-    def spin_rate(self):
-        return self.twist(-self.spin_cmd, self.spin_cmd)[1]
+    def spin_rate(self, clockwise=False):
+        w = self.cw_wheel_base if clockwise and self.cw_wheel_base > 0 else self.wheel_base
+        return 2 * self.speed_per_cmd * self.spin_cmd / w
 
 
 # One constant motor command. waypoint is set on the pause after reaching that waypoint.
@@ -54,9 +57,9 @@ def plan(waypoints, model, settle=0.3, pause=1.0):
 
     def turn(angle):
         angle = wrap_angle(angle)
-        duration = (abs(angle) - math.radians(model.spin_offset)) / model.spin_rate()
-        if angle < 0:
-            duration *= model.cw_scale
+        cw = angle < 0
+        offset = model.cw_offset if cw else model.spin_offset
+        duration = (abs(angle) - math.radians(offset)) / model.spin_rate(cw)
         if duration > 0.05:
             c = math.copysign(model.spin_cmd, angle)
             steps.append(Step(-c, c, duration, None))
