@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .venv/
 build/
+reports/
 install/
 log/
 .pytest_cache/
