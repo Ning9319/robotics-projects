@@ -1,0 +1,9 @@
+velocity_control:
+  ros__parameters:
+    speed_per_cmd: 1.31
+    wheel_base: 0.526
+    spin_cmd: 0.35
+    spin_offset: 20.5
+    trim: 0.1
+    cw_wheel_base: 0.397
+    cw_offset: 3.2
