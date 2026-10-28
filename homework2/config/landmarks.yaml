@@ -1,0 +1,22 @@
+world_frame: map
+unit_m: 0.5
+
+tags:
+  1:
+    position_m: [1.100, 0.000, 0.140]
+    facing: "-x"
+  2:
+    position_m: [1.100, 0.500, 0.140]
+    facing: "-x"
+  3:
+    position_m: [0.500, 1.860, 0.140]
+    facing: "-y"
+  4:
+    position_m: [-0.500, 1.860, 0.140]
+    facing: "-y"
+  5:
+    position_m: [-0.500, 1.000, 0.140]
+    facing: "+x"
+  7:
+    position_m: [0.000, -0.700, 0.140]
+    facing: "+y"
