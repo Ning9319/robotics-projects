@@ -43,6 +43,7 @@ DRIVE_SLOW = 0.115                    # used near a waypoint
 SPIN_MAX_PULSE_S = 0.18
 SPIN_MIN_PULSE_S = 0.10
 SPIN_SETTLE_S = 0.25
+WP_HOLD_SECONDS = 2.0  # Stop for 2 seconds after reaching each waypoint
 # Avoid in-place corrections caused by a fluctuating bearing to a very close
 # waypoint (particularly WP2 after the 1 m northward segment).
 APPROACH_DISTANCE_M = 0.23
@@ -102,7 +103,8 @@ class VisualNavigation(Node):
         self.pose_seq = 0
         self.last_fused_sample = 0.0
         self.target_index = 1          # start point is already waypoint 0
-        self.phase = 'TRAVEL'           # TRAVEL -> ALIGN -> next waypoint
+        self.phase = 'TRAVEL'           # TRAVEL -> ALIGN -> HOLD -> next waypoint
+        self.hold_until = 0.0
         self.armed = False
         self.ready_since = None
         self.start_at = None
@@ -224,8 +226,17 @@ class VisualNavigation(Node):
                     # an implausible backwards estimate must not cause the
                     # controller to keep turning on a false +69 deg reading.
                     if yaw_delta < -math.radians(10):
-                        rejected.append((tag_id, 'reverse yaw during WP2 CCW align'))
-                        continue
+                        # Allow a bounded clockwise correction only if the
+                        # controller actually commanded a clockwise spin.
+                        clockwise_correction = (
+                            self.last_spin_direction == -1
+                            and now - self.last_spin_at < 3.0
+                            and abs(yaw_delta) <= max_yaw_jump
+                        )
+
+                        if not clockwise_correction:
+                            rejected.append((tag_id, 'unexplained reverse yaw during WP2 align'))
+                            continue
                     if math.hypot(x - self.waypoints[2][0],
                                   y - self.waypoints[2][1]) > REACQUIRE_MAX_POSITION_M:
                         rejected.append((tag_id, 'outside WP2 vicinity'))
@@ -349,6 +360,24 @@ class VisualNavigation(Node):
         return self.spin_command
 
     def command_for_waypoint(self, now):
+        # Hold the rover still for 2 seconds after each confirmed waypoint.
+        if self.phase == 'HOLD':
+            if now < self.hold_until:
+                return 0.0, 0.0
+
+            print(f'WP{self.target_index} HOLD COMPLETE: '
+                f'{WP_HOLD_SECONDS:.1f} seconds elapsed.', flush=True)
+
+            if self.target_index == self.stop_after:
+                self.done = True
+                self.phase = 'DONE'
+                print('ROUTE COMPLETE — motors stopped.', flush=True)
+            else:
+                self.target_index += 1
+                self.phase = 'TRAVEL'
+
+            return 0.0, 0.0
+
         # Continue/finish any short turn before changing the movement phase.
         active_spin = self.pending_spin(now)
         if active_spin is not None:
@@ -408,14 +437,16 @@ class VisualNavigation(Node):
             return 0.0, 0.0  # wait for the rover to settle
 
         print(f'REACHED WP{self.target_index}: x={self.pose.x:+.3f} m '
-              f'y={self.pose.y:+.3f} m yaw={math.degrees(self.pose.yaw):+.1f} deg', flush=True)
-        if self.target_index == self.stop_after:
-            self.done = True
-            self.phase = 'DONE'
-            print('ROUTE COMPLETE — motors stopped.', flush=True)
-        else:
-            self.target_index += 1
-            self.phase = 'TRAVEL'
+            f'y={self.pose.y:+.3f} m yaw={math.degrees(self.pose.yaw):+.1f} deg', flush=True)
+
+        # Stop the rover for 2 seconds before proceeding to the next waypoint.
+        self.phase = 'HOLD'
+        self.hold_until = now + WP_HOLD_SECONDS
+
+        print(f'WP{self.target_index} HOLD START: '
+            f'motors stopped for {WP_HOLD_SECONDS:.1f} seconds.',
+            flush=True)
+
         return 0.0, 0.0
 
     def tick(self):
