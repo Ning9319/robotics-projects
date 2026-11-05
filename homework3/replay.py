@@ -48,7 +48,11 @@ def motions(traj):
 
 
 def replay(run_dir, range_scale=None, range_offset=None, r_scale=None, q_scale=None,
-           new_max_yaw_std_deg=10.0, min_new_frames=3):
+           new_max_yaw_std_deg=10.0, min_new_frames=3, q_override=None, turn_std_deg=None,
+           turn_pos_std_m=0.0):
+    """q_override: dict of NoiseParams motion fields (absolute values, before q_scale).
+    turn_std_deg: per-turn heading std (default: the run's turn_coast_std_deg).
+    turn_pos_std_m: per-turn position std per axis (in-place spins also shift the robot)."""
     run_dir = Path(run_dir)
     cfg = json.loads((run_dir / 'config.json').read_text())
     old_sc = cfg['sensor_calibration']['range_scale']
@@ -57,6 +61,8 @@ def replay(run_dir, range_scale=None, range_offset=None, r_scale=None, q_scale=N
     off = old_off if range_offset is None else range_offset
 
     n = dict(cfg['noise'])
+    if q_override:
+        n.update(q_override)
     if q_scale is not None:
         for k in ('var_forward_per_m', 'var_lateral_per_m', 'var_heading_per_rad', 'var_heading_per_m'):
             n[k] *= q_scale
@@ -65,7 +71,8 @@ def replay(run_dir, range_scale=None, range_offset=None, r_scale=None, q_scale=N
         for k in ('range_std_base', 'range_std_per_m', 'bearing_std'):
             n[k] *= f
     slam = EKFSLAM(NoiseParams(**n))
-    turn_var = math.radians(cfg['turn_coast_std_deg']) ** 2
+    turn_var = math.radians(cfg['turn_coast_std_deg'] if turn_std_deg is None else turn_std_deg) ** 2
+    turn_pos_var = turn_pos_std_m ** 2
 
     events = [(t, 0, ('motion', d, a, turn)) for t, d, a, turn in motions(load_rows(run_dir / 'trajectory.csv'))]
     for k, r in enumerate(load_rows(run_dir / 'updates.csv')):
@@ -82,7 +89,7 @@ def replay(run_dir, range_scale=None, range_offset=None, r_scale=None, q_scale=N
             _, d, a, turn = ev
             slam.predict(d, a)
             if turn:
-                slam.add_robot_noise(np.diag([0.0, 0.0, turn_var]))
+                slam.add_robot_noise(np.diag([turn_pos_var, turn_pos_var, turn_var]))
         elif ev[0] == 'update':
             r = ev[2]
             if r['status'].startswith('unconfirmed') or int(r['n_frames']) < 1:

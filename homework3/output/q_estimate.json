@@ -1,0 +1,19 @@
+{
+  "runs": [
+    "square_test4",
+    "square_run2",
+    "octagon_run4",
+    "square_final",
+    "octagon_final"
+  ],
+  "n_drive": 41,
+  "n_turn": 43,
+  "q": {
+    "var_forward_per_m": 0.0008564754248266595,
+    "var_lateral_per_m": 0.00013373218385415357,
+    "var_heading_per_m": 0.0002949686977765891,
+    "turn_std_deg": 0.0,
+    "var_heading_per_rad": 0.02362869942312853,
+    "turn_pos_std_m": 0.013695479234460706
+  }
+}
