@@ -136,6 +136,14 @@ class SlamNode(Node):
         self.turn_tries = 0
         self.lost_stops = 0
         self.recoveries = 0
+        self.searching = False
+        self.search_steps = 0            # SEARCH turns in the current search
+        self.search_dir = 1.0
+        self.search_episodes = 0         # searches started for the current vertex
+        self.searches = 0                # total SEARCH turns in the run
+        self.last_turn_sign = 1.0
+        self.last_motion = None
+        self.stop_known = 0              # mapped tags successfully updated in this stop
         self.done = False
         self.finish_reason = None
         self.stop_buffer = {}            # tag_id -> [(range, bearing)] of the current stop
@@ -301,13 +309,23 @@ class SlamNode(Node):
 
     def update_tag(self, tag_id, averaged, retry=False):
         n, rng, bearing, r_std, b_std = averaged
+        yaw_std = math.sqrt(self.slam.robot_cov[2, 2])
         if tag_id not in self.slam.index and n < self.args.min_new_frames:
             status, nis = 'unconfirmed_new', float('nan')
+        elif tag_id not in self.slam.index and \
+                yaw_std > math.radians(self.args.new_landmark_max_yaw_std_deg):
+            # Do not map a landmark from a pose whose heading is very uncertain:
+            # its position would inherit that error, and later re-observations
+            # from the same spot would make the EKF falsely confident. It will
+            # be added at a later stop, once a mapped tag has fixed the heading.
+            status, nis = 'deferred_new', float('nan')
         else:
             self.slam.last_nis = float('nan')
             status = self.slam.update(tag_id, rng, bearing)
             nis = self.slam.last_nis
             self.stop_tags.add(tag_id)
+            if status == 'updated':
+                self.stop_known += 1
         x, y, yaw = self.slam.robot_pose
         lap, side_k = (self.waypoints[self.wp_index][2:] if self.wp_index < len(self.waypoints)
                        else ('', ''))
@@ -335,7 +353,7 @@ class SlamNode(Node):
                 self.slam.predict(v * dt, omega * dt)
         self.last_predict = now
 
-    def start_turn(self, error):
+    def start_turn(self, error, label='TURN', count_try=True):
         ccw = error > 0
         omega = self.model.spin_rate(clockwise=not ccw)
         coast = math.radians(self.model.spin_offset if ccw else self.model.cw_offset)
@@ -346,9 +364,12 @@ class SlamNode(Node):
         self.motion = (0.0, sign * omega)
         self.turn_coast = sign * coast
         self.last_predict = self.now()
-        self.turn_tries += 1
-        print(f'  TURN {math.degrees(error):+.1f} deg: {duration:.2f} s spin + '
-              f'{math.degrees(coast):.1f} deg coast (HW1)', flush=True)
+        self.last_motion = 'TURN'
+        if count_try:
+            self.turn_tries += 1
+            self.last_turn_sign = sign
+        print(f'  {label} {math.degrees(error):+.1f} deg: {duration:.2f} s spin + '
+              f'{math.degrees(coast):.1f} deg coast', flush=True)
         self.set_phase('TURN', duration)
 
     def start_drive(self, distance, heading_error):
@@ -365,13 +386,16 @@ class SlamNode(Node):
         self.command_target = (left, right)
         self.motion = (speed, 2 * m.speed_per_cmd * steer / m.wheel_base)
         self.last_predict = self.now()
+        self.last_motion = 'DRIVE'
         self.set_phase('DRIVE', duration)
 
     def stop_motion(self, now):
         self.integrate_motion(now)
-        if self.phase == 'TURN' and self.turn_coast:
-            # HW1: the rover keeps turning ~spin_offset after the spin stops.
-            self.slam.predict(0.0, self.turn_coast)
+        if self.phase == 'TURN':
+            # Coast after the spin stops (model value), plus a per-turn heading
+            # uncertainty: short spins are dominated by static friction / coast.
+            if self.turn_coast:
+                self.slam.predict(0.0, self.turn_coast)
             self.slam.add_robot_noise(np.diag([0.0, 0.0, self.turn_coast_var]))
         self.motion = (0.0, 0.0)
         self.turn_coast = 0.0
@@ -383,16 +407,34 @@ class SlamNode(Node):
         if self.wp_index >= len(self.waypoints):
             self.finish('route complete')
             return
+        if self.searching:
+            if self.stop_known:
+                print(f'  SEARCH done: mapped tag(s) {sorted(self.stop_tags)} in view', flush=True)
+                self.searching = False
+            elif self.search_steps >= self.args.max_search_steps:
+                self.finish(f'search: no mapped tag after {self.search_steps} turns')
+                return
+            else:
+                self.search_turn()
+                return
         gx, gy, lap, side_k = self.waypoints[self.wp_index]
         x, y, yaw = self.slam.robot_pose
         dist = math.hypot(gx - x, gy - y)
         error = wrap_angle(math.atan2(gy - y, gx - x) - yaw)
-        overshot = dist < 2 * self.args.pos_tol and abs(error) > math.pi / 2
-        if dist < self.args.pos_tol or overshot:
+        turn_tol = math.radians(self.args.turn_tol_deg)
+        # Very close to the vertex the bearing is dominated by cm-level noise:
+        # never spin in place for it (a -34 deg turn 6 cm before a vertex lost
+        # all tags in the 2026-11-05 field test); count the vertex as reached.
+        close = dist < self.args.approach_radius and abs(error) > turn_tol
+        if dist < self.args.pos_tol or close:
             self.reach_vertex(lap, side_k, dist)
             return
-        if abs(error) > math.radians(self.args.turn_tol_deg) and \
-                self.turn_tries < self.args.max_turn_tries:
+        if abs(error) > turn_tol and self.turn_tries >= self.args.max_turn_tries and \
+                abs(error) > math.radians(self.args.max_drive_error_deg):
+            self.finish(f'could not align heading ({math.degrees(error):+.0f} deg left '
+                        f'after {self.turn_tries} turns)')
+            return
+        if abs(error) > turn_tol and self.turn_tries < self.args.max_turn_tries:
             # Turn at most max_turn_step_deg at a time and observe in between, so
             # already-mapped tags and newly seen tags share a view (landmark
             # handoff): new tags are then initialized from a corrected heading
@@ -401,8 +443,32 @@ class SlamNode(Node):
             steps = math.ceil(abs(error) / math.radians(self.max_turn_step_deg) - 1e-9)
             self.start_turn(error / max(1, steps))
             return
+        # About to DRIVE (turning in place never changes the position, driving
+        # with a wrong heading does). If the last stop saw no mapped tag and the
+        # heading is uncertain, look for a mapped tag first.
+        yaw_std = math.sqrt(self.slam.robot_cov[2, 2])
+        if not self.stop_known and yaw_std > math.radians(self.args.search_sigma_deg):
+            self.search_episodes += 1
+            if self.search_episodes > self.args.max_search_episodes:
+                self.finish(f'search needed {self.search_episodes} times for one vertex')
+                return
+            self.searching = True
+            self.search_steps = 0
+            # Look back first: the mapped tags were on the side we turned away from.
+            self.search_dir = -self.last_turn_sign
+            print(f'  no mapped tag in view and yaw std {math.degrees(yaw_std):.1f} deg '
+                  f'-> SEARCH before driving', flush=True)
+            self.search_turn()
+            return
         self.turn_tries = 0
         self.start_drive(min(self.args.segment, dist), error)
+
+    def search_turn(self):
+        self.search_steps += 1
+        self.searches += 1
+        self.start_turn(self.search_dir * math.radians(self.args.search_step_deg),
+                        label=f'SEARCH {self.search_steps}/{self.args.max_search_steps}:',
+                        count_try=False)
 
     def reach_vertex(self, lap, side_k, dist):
         x, y, yaw = self.slam.robot_pose
@@ -417,6 +483,7 @@ class SlamNode(Node):
             self.save_snapshot(f'end of lap {lap}', lap)
         self.wp_index += 1
         self.turn_tries = 0
+        self.search_episodes = 0
         if self.args.vertex_hold > 0:
             self.set_phase('HOLD', self.args.vertex_hold)
 
@@ -462,6 +529,7 @@ class SlamNode(Node):
                 self.stop_buffer = {}
                 self.stop_frames = 0
                 self.stop_tags = set()
+                self.stop_known = 0
                 self.set_phase('OBSERVE', self.args.observe)
         elif self.phase == 'OBSERVE':
             self.process_frames()
@@ -484,11 +552,16 @@ class SlamNode(Node):
         x, y, yaw = self.slam.robot_pose
         std = math.sqrt(self.slam.robot_cov[0, 0] + self.slam.robot_cov[1, 1])
         tags = ','.join(str(t) for t in sorted(self.stop_tags)) or '-'
+        yaw_std = math.sqrt(self.slam.robot_cov[2, 2])
         print(f'STOP wp {self.wp_index + 1}/{len(self.waypoints)}: '
               f'({x:+.3f}, {y:+.3f}) m {math.degrees(yaw):+.1f} deg, '
-              f'pos std {100 * std:.1f} cm, {self.stop_frames} frames, tags {tags}, '
-              f'{len(self.slam.index)} mapped', flush=True)
-        self.lost_stops = 0 if self.stop_tags else self.lost_stops + 1
+              f'pos std {100 * std:.1f} cm, yaw std {math.degrees(yaw_std):.1f} deg, '
+              f'{self.stop_frames} frames, tags {tags}, {len(self.slam.index)} mapped', flush=True)
+        # Limit blind DRIVING only: turning in place does not move the robot.
+        if self.stop_tags:
+            self.lost_stops = 0
+        elif self.last_motion == 'DRIVE':
+            self.lost_stops += 1
         if self.lost_stops >= self.args.lost_stops:
             self.finish(f'no landmark seen in {self.lost_stops} consecutive stops')
         elif std > MAX_ROBOT_STD_M:
@@ -535,7 +608,8 @@ class SlamNode(Node):
         self.done = True
         self.phase = 'DONE'
         self.send(0, 0)
-        print(f'FINISHED: {reason} ({self.recoveries} covariance recoveries)', flush=True)
+        print(f'FINISHED: {reason} ({self.recoveries} covariance recoveries, '
+              f'{self.searches} search turns)', flush=True)
         self.print_map('FINAL MAP')
 
     def close(self):
@@ -570,8 +644,10 @@ def parse_args(argv=None):
     p.add_argument('--label', default=None, help='name of the run folder')
     p.add_argument('--speed-per-cmd', type=float, default=None,
                    help='override HW1 speed_per_cmd (m/s per command) for another floor')
-    p.add_argument('--spin-offset-deg', type=float, default=None,
-                   help='override HW1 CCW coast angle after a spin (deg) for another floor')
+    p.add_argument('--spin-offset-deg', type=float, default=0.0,
+                   help='CCW coast angle after a spin (deg). Default 0: on the field floor '
+                        '(2026-11-05) short <=35 deg spins turned ~100 deg/s x duration with no '
+                        "coast; HW1's 20.5 deg was tuned for long single turns")
     p.add_argument('--cw-offset-deg', type=float, default=None,
                    help='override HW1 CW coast angle after a spin (deg) for another floor')
     p.add_argument('--segment', type=float, default=0.30, help='max straight segment between stops (m)')
@@ -586,8 +662,22 @@ def parse_args(argv=None):
     p.add_argument('--max-turn-step-deg', type=float, default=None,
                    help='largest in-place turn between two observation stops '
                         '(default 35 for square, 50 for octagon)')
-    p.add_argument('--max-turn-tries', type=int, default=6,
+    p.add_argument('--max-turn-tries', type=int, default=10,
                    help='in-place turns per segment before driving anyway')
+    p.add_argument('--max-drive-error-deg', type=float, default=20.0,
+                   help='never drive with a larger heading error: stop the run instead')
+    p.add_argument('--approach-radius', type=float, default=0.10,
+                   help='within this distance (m) of a vertex, do not spin to re-aim: '
+                        'count the vertex as reached')
+    p.add_argument('--search-sigma-deg', type=float, default=5.0,
+                   help='before driving: if the last stop saw no mapped tag and the heading '
+                        'std exceeds this, search by turning in place instead of driving')
+    p.add_argument('--search-step-deg', type=float, default=30.0)
+    p.add_argument('--max-search-steps', type=int, default=12, help='12 x 30 deg = one full turn')
+    p.add_argument('--max-search-episodes', type=int, default=3,
+                   help='searches allowed per vertex before stopping the run')
+    p.add_argument('--new-landmark-max-yaw-std-deg', type=float, default=10.0,
+                   help='defer adding a new landmark while the heading std exceeds this')
     p.add_argument('--max-range', type=float, default=2.6, help='ignore tags farther than this (m)')
     p.add_argument('--max-view-deg', type=float, default=60.0, help='ignore tags seen more obliquely')
     p.add_argument('--min-new-frames', type=int, default=3,
