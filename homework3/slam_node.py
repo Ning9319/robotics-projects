@@ -57,6 +57,23 @@ MAX_STEER = 0.045             # max differential command while driving (as HW2)
 MAX_ROBOT_STD_M = 0.5         # abort if the robot position estimate gets this uncertain
 
 
+class Tee:
+    """Write to the terminal and a log file at the same time."""
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for s in self.streams:
+            if not s.closed:
+                s.write(text)
+
+    def flush(self):
+        for s in self.streams:
+            if not s.closed:
+                s.flush()
+
+
 def make_waypoints(path, side, laps, direction):
     """Polygon vertices in the SLAM frame, starting at the origin facing +x."""
     sides, exterior = (4, math.pi / 2) if path == 'square' else (8, math.pi / 4)
@@ -168,6 +185,11 @@ class SlamNode(Node):
             name = 'preview_' + name
         self.run_dir = ROOT / 'homework3/output/runs' / name
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        # Everything printed to the terminal is also saved to console.log.
+        self.console = open(self.run_dir / 'console.log', 'w', encoding='utf-8')
+        self.prev_stdout = sys.stdout
+        self.tee = Tee(self.prev_stdout, self.console)
+        sys.stdout = self.tee
         config = {
             'args': vars(args), 'side_m': side, 'waypoints': self.waypoints,
             'hw1_model': vars(self.model), 'sensor_calibration': sensor,
@@ -630,6 +652,9 @@ class SlamNode(Node):
         self.obs_file.close()
         self.upd_file.close()
         print(f'Saved run to {self.run_dir}', flush=True)
+        if sys.stdout is self.tee:
+            sys.stdout = self.prev_stdout
+        self.console.close()
 
 
 def parse_args(argv=None):
@@ -674,7 +699,7 @@ def parse_args(argv=None):
                         'std exceeds this, search by turning in place instead of driving')
     p.add_argument('--search-step-deg', type=float, default=30.0)
     p.add_argument('--max-search-steps', type=int, default=12, help='12 x 30 deg = one full turn')
-    p.add_argument('--max-search-episodes', type=int, default=3,
+    p.add_argument('--max-search-episodes', type=int, default=6,
                    help='searches allowed per vertex before stopping the run')
     p.add_argument('--new-landmark-max-yaw-std-deg', type=float, default=10.0,
                    help='defer adding a new landmark while the heading std exceeds this')
