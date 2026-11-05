@@ -53,7 +53,7 @@ from robot_control.waypoint_controller import Model, wrap_angle  # noqa: E402  (
 TICK_S = 0.02                 # control / prediction period
 LOG_PERIOD_S = 0.1            # trajectory.csv sampling
 MIN_PULSE_S = 0.10            # shortest in-place spin command
-MAX_STEER = 0.045             # max differential command while driving (as HW2)
+MAX_STEER = 0.07              # max differential command while driving (~8 deg per 0.3 m segment)
 MAX_ROBOT_STD_M = 0.5         # abort if the robot position estimate gets this uncertain
 
 
@@ -110,6 +110,9 @@ class SlamNode(Node):
             self.model.spin_offset = args.spin_offset_deg
         if args.cw_offset_deg is not None:
             self.model.cw_offset = args.cw_offset_deg
+        if args.trim is not None:
+            self.model.trim = args.trim
+        self.drive_wheel_base = args.drive_wheel_base
 
         # --- sensor correction and R from Step 2 (homework3/config/sensor_calibration.yaml)
         with open(ROOT / 'homework3/config/sensor_calibration.yaml', encoding='utf-8') as f:
@@ -215,7 +218,7 @@ class SlamNode(Node):
         print(f'HW1 model: speed_per_cmd={m.speed_per_cmd}, drive_cmd={m.drive_cmd}, '
               f'spin_cmd={m.spin_cmd}, trim={m.trim}, CCW {math.degrees(m.spin_rate()):.0f} deg/s '
               f'+{m.spin_offset} deg coast, CW {math.degrees(m.spin_rate(True)):.0f} deg/s '
-              f'+{m.cw_offset} deg coast', flush=True)
+              f'+{m.cw_offset} deg coast, drive wheel base {self.drive_wheel_base} m', flush=True)
         print(f'Sensor correction: range*{self.range_scale:.4f}{self.range_offset:+.4f} m, '
               f'bearing -({math.degrees(self.bearing_offset):+.2f} deg); R x{args.r_scale}, '
               f'Q x{args.q_scale}', flush=True)
@@ -399,14 +402,18 @@ class SlamNode(Node):
         speed = m.speed_per_cmd * m.drive_cmd
         duration = distance / speed
         # Remove a small heading error during the segment: omega = k (R-L) / W.
+        # W here is the EFFECTIVE wheelbase while driving forward: a skid-steer
+        # rover turns much less per wheel-speed difference while driving than
+        # when spinning in place (field fit 2026-11-05: 0.34x the spin value).
         # Trim only cancels the rover's physical drift, so it is NOT part of the
         # predicted rotation.
-        steer = heading_error / duration * m.wheel_base / (2 * m.speed_per_cmd)
+        W = self.drive_wheel_base
+        steer = heading_error / duration * W / (2 * m.speed_per_cmd)
         steer = max(-MAX_STEER, min(MAX_STEER, steer))
         left = m.drive_cmd * (1 + m.trim) - steer
         right = m.drive_cmd * (1 - m.trim) + steer
         self.command_target = (left, right)
-        self.motion = (speed, 2 * m.speed_per_cmd * steer / m.wheel_base)
+        self.motion = (speed, 2 * m.speed_per_cmd * steer / W)
         self.last_predict = self.now()
         self.last_motion = 'DRIVE'
         self.set_phase('DRIVE', duration)
@@ -673,6 +680,12 @@ def parse_args(argv=None):
                    help='CCW coast angle after a spin (deg). Default 0: on the field floor '
                         '(2026-11-05) short <=35 deg spins turned ~100 deg/s x duration with no '
                         "coast; HW1's 20.5 deg was tuned for long single turns")
+    p.add_argument('--trim', type=float, default=0.04,
+                   help='left/right drive trim. Default 0.04 from the 2026-11-05 field fit: '
+                        "HW1's 0.10 over-corrected to a -4.4 deg/m right drift")
+    p.add_argument('--drive-wheel-base', type=float, default=1.55,
+                   help='effective wheel base (m) for steering while driving forward; field fit '
+                        '2026-11-05 (in-place spins use the HW1 value 0.526)')
     p.add_argument('--cw-offset-deg', type=float, default=None,
                    help='override HW1 CW coast angle after a spin (deg) for another floor')
     p.add_argument('--segment', type=float, default=0.30, help='max straight segment between stops (m)')
