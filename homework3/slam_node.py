@@ -123,6 +123,7 @@ class SlamNode(Node):
         self.turn_coast = 0.0            # signed coast angle to add when a spin ends
         self.turn_tries = 0
         self.lost_stops = 0
+        self.recoveries = 0
         self.done = False
         self.finish_reason = None
         self.stop_buffer = {}            # tag_id -> [(range, bearing)] of the current stop
@@ -255,35 +256,62 @@ class SlamNode(Node):
         against a one-frame false detection creating a landmark).
         """
         buffer, self.stop_buffer = self.stop_buffer, {}
-        order = sorted(buffer, key=lambda t: (t not in self.slam.index, t))
+        averaged = {tag_id: self.average(samples) for tag_id, samples in buffer.items()}
+        known = sorted(t for t in averaged if t in self.slam.index)
+        new = sorted(t for t in averaged if t not in self.slam.index)
+
+        statuses = {t: self.update_tag(t, averaged[t]) for t in known}
+        if statuses and all(s == 'rejected' for s in statuses.values()):
+            # Every re-observed landmark disagrees with the prediction: the
+            # robot itself slipped / was bumped (motion model failed), not the
+            # tags. Inflate the robot covariance and re-apply the observations,
+            # otherwise the gate would reject them forever and the filter
+            # could never recover.
+            self.recoveries += 1
+            pos, yaw = self.args.recover_std_m, math.radians(self.args.recover_std_deg)
+            print(f'  RECOVER: all {len(known)} known tag(s) rejected -> inflate robot '
+                  f'covariance ({100 * pos:.0f} cm, {self.args.recover_std_deg:.0f} deg) '
+                  'and retry', flush=True)
+            self.slam.add_robot_noise(np.diag([pos ** 2, pos ** 2, yaw ** 2]))
+            for t in known:
+                self.update_tag(t, averaged[t], retry=True)
+        for t in new:
+            self.update_tag(t, averaged[t])
+
+    @staticmethod
+    def average(samples):
+        samples = np.array(samples)
+        rng = float(samples[:, 0].mean())
+        bearing = math.atan2(np.sin(samples[:, 1]).mean(), np.cos(samples[:, 1]).mean())
+        d = samples[:, 1] - bearing
+        return (len(samples), rng, bearing, float(samples[:, 0].std()),
+                float(np.degrees(np.arctan2(np.sin(d), np.cos(d)).std())))
+
+    def update_tag(self, tag_id, averaged, retry=False):
+        n, rng, bearing, r_std, b_std = averaged
+        if tag_id not in self.slam.index and n < self.args.min_new_frames:
+            status, nis = 'unconfirmed_new', float('nan')
+        else:
+            self.slam.last_nis = float('nan')
+            status = self.slam.update(tag_id, rng, bearing)
+            nis = self.slam.last_nis
+            self.stop_tags.add(tag_id)
+        x, y, yaw = self.slam.robot_pose
         lap, side_k = (self.waypoints[self.wp_index][2:] if self.wp_index < len(self.waypoints)
                        else ('', ''))
-        for tag_id in order:
-            samples = np.array(buffer[tag_id])
-            n = len(samples)
-            rng = float(samples[:, 0].mean())
-            bearing = math.atan2(np.sin(samples[:, 1]).mean(), np.cos(samples[:, 1]).mean())
-            r_std = float(samples[:, 0].std())
-            d = samples[:, 1] - bearing
-            b_std = float(np.degrees(np.arctan2(np.sin(d), np.cos(d)).std()))
-            if tag_id not in self.slam.index and n < self.args.min_new_frames:
-                status, nis = 'unconfirmed_new', float('nan')
-            else:
-                self.slam.last_nis = float('nan')
-                status = self.slam.update(tag_id, rng, bearing)
-                nis = self.slam.last_nis
-                self.stop_tags.add(tag_id)
-            x, y, yaw = self.slam.robot_pose
-            self.upd.writerow([f'{self.elapsed():.3f}', lap, side_k, tag_id, n, f'{rng:.5f}',
-                               f'{math.degrees(bearing):.4f}', f'{r_std:.5f}', f'{b_std:.4f}',
-                               status, '' if math.isnan(nis) else f'{nis:.3f}',
-                               f'{x:.4f}', f'{y:.4f}', f'{math.degrees(yaw):.3f}'])
-            if status == 'new':
-                m = self.slam.landmarks()[tag_id][0]
-                print(f'  NEW landmark {tag_id} at ({m[0]:+.2f}, {m[1]:+.2f}) m from {n} frames '
-                      f'[{len(self.slam.index)} mapped]', flush=True)
-            elif status == 'rejected':
-                print(f'  tag {tag_id} REJECTED by gate (NIS {nis:.1f})', flush=True)
+        self.upd.writerow([f'{self.elapsed():.3f}', lap, side_k, tag_id, n, f'{rng:.5f}',
+                           f'{math.degrees(bearing):.4f}', f'{r_std:.5f}', f'{b_std:.4f}',
+                           ('retry_' if retry else '') + status,
+                           '' if math.isnan(nis) else f'{nis:.3f}',
+                           f'{x:.4f}', f'{y:.4f}', f'{math.degrees(yaw):.3f}'])
+        if status == 'new':
+            m = self.slam.landmarks()[tag_id][0]
+            print(f'  NEW landmark {tag_id} at ({m[0]:+.2f}, {m[1]:+.2f}) m from {n} frames '
+                  f'[{len(self.slam.index)} mapped]', flush=True)
+        elif status == 'rejected':
+            print(f'  tag {tag_id} {"still " if retry else ""}REJECTED by gate (NIS {nis:.1f})',
+                  flush=True)
+        return status
 
     # ------------------------------------------------------------ motion
     def integrate_motion(self, now):
@@ -494,7 +522,7 @@ class SlamNode(Node):
         self.done = True
         self.phase = 'DONE'
         self.send(0, 0)
-        print(f'FINISHED: {reason}', flush=True)
+        print(f'FINISHED: {reason} ({self.recoveries} covariance recoveries)', flush=True)
         self.print_map('FINAL MAP')
 
     def close(self):
@@ -548,6 +576,10 @@ def parse_args(argv=None):
     p.add_argument('--q-scale', type=float, default=1.0, help='multiply Q variances')
     p.add_argument('--turn-coast-std-deg', type=float, default=8.0,
                    help='extra heading std per in-place turn (coast uncertainty)')
+    p.add_argument('--recover-std-m', type=float, default=0.15,
+                   help='robot position std added when every known tag at a stop is rejected')
+    p.add_argument('--recover-std-deg', type=float, default=15.0,
+                   help='robot heading std added in that recovery')
     p.add_argument('--lost-stops', type=int, default=3,
                    help='stop the run after this many stops without any landmark')
     p.add_argument('--max-run-s', type=float, default=900.0)
