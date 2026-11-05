@@ -60,9 +60,11 @@ def main():
     parser.add_argument('--figure', default=str(ROOT / 'homework3/output/figures/sensor_calibration.png'))
     parser.add_argument('--max-view-deg', type=float, default=90.0,
                         help='ignore positions seen more obliquely than this when fitting')
+    parser.add_argument('--exclude', nargs='+', default=[], metavar='LABEL',
+                        help='drop these position labels entirely (e.g. a badly placed run that was redone)')
     args = parser.parse_args()
 
-    groups = load(args.csv)
+    groups = [g for g in load(args.csv) if g['label'] not in args.exclude]
     if not groups:
         raise SystemExit('no data')
 
@@ -147,13 +149,16 @@ def main():
     except ImportError:
         return
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    # Without lateral positions every true bearing is 0: plot bearing error vs range instead.
+    bearing_vs_range = np.ptp([g['true_b'] for g in groups]) < math.radians(1)
     for g in groups:
         before = 100 * (g['r'].mean() - g['true_r'])
         after = 100 * np.mean(range_errors(g, True))
         err = 100 * g['r'].std(ddof=1)
         ax1.errorbar(g['true_r'], before, yerr=err, fmt='o', color='tab:gray', capsize=3)
         ax1.errorbar(g['true_r'] + 0.02, after, yerr=err, fmt='s', color='tab:blue', capsize=3)
-        ax2.errorbar(math.degrees(g['true_b']), math.degrees(wrap(g['b'].mean() - g['true_b'])),
+        ax2.errorbar(g['true_r'] if bearing_vs_range else math.degrees(g['true_b']),
+                     math.degrees(wrap(g['b'].mean() - g['true_b'])),
                      yerr=math.degrees(g['b'].std(ddof=1)), fmt='o', color='tab:blue', capsize=3)
     ax1.axhline(0, color='k', lw=0.8)
     ax1.set(xlabel='tape-measured range (m)', ylabel='range error (cm)',
@@ -161,7 +166,8 @@ def main():
     ax2.axhline(0, color='k', lw=0.8)
     ax2.axhline(math.degrees(bearing_offset), color='tab:red', ls='--', lw=1,
                 label=f'offset {math.degrees(bearing_offset):+.2f}°')
-    ax2.set(xlabel='tape-measured bearing (deg)', ylabel='bearing error (deg)',
+    ax2.set(xlabel='tape-measured range (m), tag straight ahead' if bearing_vs_range
+            else 'tape-measured bearing (deg)', ylabel='bearing error (deg)',
             title='Bearing error (raw)')
     ax2.legend()
     fig.tight_layout()
