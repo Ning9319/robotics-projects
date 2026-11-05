@@ -1,0 +1,574 @@
+#!/usr/bin/env python3
+"""HW3 EKF-SLAM node: drive a square / octagon with stop-and-observe and build a map.
+
+Needs camera + image_proc rectify + apriltag (homework3/config/tags_hw3.yaml) and,
+with --drive, robot_control motor_control. Never run with HW1/HW2 controllers.
+
+    python3 homework3/slam_node.py                                   # preview: never moves
+    python3 homework3/slam_node.py --path square --side 1.2 --laps 3 --drive
+    python3 homework3/slam_node.py --path octagon --side 0.5 --laps 3 --drive
+
+Each leg is split into short segments. One cycle:
+  TURN    open-loop in-place spin toward the next waypoint (HW1 model), only if
+          the heading error is large
+  DRIVE   straight segment (open loop, HW1 speed); small heading errors are
+          removed with a gentle differential steer during the segment
+  SETTLE  wheels stopped, rover coasts to rest; camera frames are ignored
+  OBSERVE wheels stopped, ~1 s of camera frames are averaged per tag, then ONE
+          EKF update per tag is applied at the end of the stop
+The EKF predicts from the commanded motion while moving and is corrected only
+while the rover stands still (no motion blur, no camera-latency error).
+Frames from one stop are averaged instead of used as separate updates: their
+errors are almost fully correlated (Step 2: frame jitter 0.15 cm vs. 0.3+ cm
+error between positions), and repeated updates of a just-initialized landmark
+from the same pose make the EKF overconfident about the robot heading.
+Waypoints are in the SLAM frame (start pose = origin), so the path is closed
+loop on the SLAM estimate. The filter starts with NO landmarks and adds every
+tag ID the first time it is seen; it never reads the ground-truth map.
+"""
+
+import argparse
+import csv
+import json
+import math
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import rclpy
+import yaml
+from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+from tf2_msgs.msg import TFMessage
+
+from ekf_slam import EKFSLAM, NoiseParams
+from tag_measurement import measure
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'robot_control'))
+from robot_control.waypoint_controller import Model, wrap_angle  # noqa: E402  (reuse HW1)
+
+TICK_S = 0.02                 # control / prediction period
+LOG_PERIOD_S = 0.1            # trajectory.csv sampling
+MIN_PULSE_S = 0.10            # shortest in-place spin command
+MAX_STEER = 0.045             # max differential command while driving (as HW2)
+MAX_ROBOT_STD_M = 0.5         # abort if the robot position estimate gets this uncertain
+
+
+def make_waypoints(path, side, laps, direction):
+    """Polygon vertices in the SLAM frame, starting at the origin facing +x."""
+    sides, exterior = (4, math.pi / 2) if path == 'square' else (8, math.pi / 4)
+    turn = exterior if direction == 'ccw' else -exterior
+    x = y = heading = 0.0
+    points = []
+    for lap in range(laps):
+        for k in range(sides):
+            x += side * math.cos(heading)
+            y += side * math.sin(heading)
+            points.append((x, y, lap + 1, k + 1))
+            heading += turn
+    return points
+
+
+class SlamNode(Node):
+    def __init__(self, args):
+        super().__init__('hw3_ekf_slam')
+        self.args = args
+        self.drive = args.drive
+
+        # --- HW1 motion model and calibration (same floor as HW1/HW2)
+        with open(ROOT / 'homework1/config/ballroom.yaml', encoding='utf-8') as f:
+            hw1 = yaml.safe_load(f)['velocity_control']['ros__parameters']
+        self.model = Model()
+        for key, value in hw1.items():
+            if hasattr(self.model, key):
+                setattr(self.model, key, value)
+
+        # --- sensor correction and R from Step 2 (homework3/config/sensor_calibration.yaml)
+        with open(ROOT / 'homework3/config/sensor_calibration.yaml', encoding='utf-8') as f:
+            sensor = yaml.safe_load(f)
+        self.range_scale = float(sensor['range_scale'])
+        self.range_offset = float(sensor['range_offset_m'])
+        self.bearing_offset = math.radians(float(sensor['bearing_offset_deg']))
+        q = args.q_scale
+        default_q = NoiseParams()
+        self.noise = NoiseParams(
+            var_forward_per_m=q * default_q.var_forward_per_m,
+            var_lateral_per_m=q * default_q.var_lateral_per_m,
+            var_heading_per_rad=q * default_q.var_heading_per_rad,
+            var_heading_per_m=q * default_q.var_heading_per_m,
+            range_std_base=args.r_scale * float(sensor['range_std_base_m']),
+            range_std_per_m=args.r_scale * float(sensor['range_std_per_m']),
+            bearing_std=args.r_scale * math.radians(float(sensor['bearing_std_deg'])),
+        )
+        self.turn_coast_var = math.radians(args.turn_coast_std_deg) ** 2
+        self.slam = EKFSLAM(self.noise)
+
+        side = args.side if args.side is not None else (1.2 if args.path == 'square' else 0.5)
+        self.side = side
+        self.waypoints = make_waypoints(args.path, side, args.laps, args.direction)
+        self.wp_index = 0
+
+        # --- state machine
+        self.phase = 'INIT'
+        self.phase_start = time.monotonic()
+        self.phase_until = self.phase_start + args.init_observe
+        self.started = self.phase_start
+        self.command = (0.0, 0.0)
+        self.command_target = (0.0, 0.0)  # wheel command of the current TURN / DRIVE
+        self.motion = (0.0, 0.0)         # (v, omega) the EKF integrates while moving
+        self.last_predict = None
+        self.turn_coast = 0.0            # signed coast angle to add when a spin ends
+        self.turn_tries = 0
+        self.lost_stops = 0
+        self.done = False
+        self.finish_reason = None
+        self.stop_buffer = {}            # tag_id -> [(range, bearing)] of the current stop
+        self.stop_frames = 0
+        self.stop_tags = set()
+        self.frame_queue = []
+        self.frame_seq = 0
+        self.last_log = 0.0
+        self.last_preview_print = 0.0
+        self.snapshots = []
+        self.vertex_rows = []
+        self.hold_until = 0.0
+
+        # --- ROS
+        self.motor_pub = self.create_publisher(Float32MultiArray, '/motor_commands', 10)
+        self.create_subscription(TFMessage, '/tf', self.on_tf, 50)
+        self.create_timer(TICK_S, self.tick)
+
+        # --- logs
+        name = args.label or f'{args.path}_{datetime.now():%Y%m%d_%H%M%S}'
+        if not self.drive:
+            name = 'preview_' + name
+        self.run_dir = ROOT / 'homework3/output/runs' / name
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        config = {
+            'args': vars(args), 'side_m': side, 'waypoints': self.waypoints,
+            'hw1_model': vars(self.model), 'sensor_calibration': sensor,
+            'noise': vars(self.noise), 'turn_coast_std_deg': args.turn_coast_std_deg,
+        }
+        (self.run_dir / 'config.json').write_text(json.dumps(config, indent=2))
+        self.traj_file = open(self.run_dir / 'trajectory.csv', 'w', newline='', encoding='utf-8')
+        self.traj = csv.writer(self.traj_file)
+        self.traj.writerow(['t_s', 'phase', 'lap', 'side', 'x_m', 'y_m', 'yaw_deg',
+                            'var_xx', 'var_xy', 'var_yy', 'std_yaw_deg', 'n_landmarks',
+                            'cmd_left', 'cmd_right'])
+        self.obs_file = open(self.run_dir / 'observations.csv', 'w', newline='', encoding='utf-8')
+        self.obs = csv.writer(self.obs_file)
+        self.obs.writerow(['t_s', 'frame', 'phase', 'tag_id', 'raw_range_m', 'raw_bearing_deg',
+                           'range_m', 'bearing_deg', 'view_deg', 'status'])
+        self.upd_file = open(self.run_dir / 'updates.csv', 'w', newline='', encoding='utf-8')
+        self.upd = csv.writer(self.upd_file)
+        self.upd.writerow(['t_s', 'lap', 'side', 'tag_id', 'n_frames', 'range_m', 'bearing_deg',
+                           'range_std_m', 'bearing_std_deg', 'status', 'nis',
+                           'robot_x_m', 'robot_y_m', 'robot_yaw_deg'])
+
+        m = self.model
+        print(f'HW1 model: speed_per_cmd={m.speed_per_cmd}, drive_cmd={m.drive_cmd}, '
+              f'spin_cmd={m.spin_cmd}, trim={m.trim}, CCW {math.degrees(m.spin_rate()):.0f} deg/s '
+              f'+{m.spin_offset} deg coast, CW {math.degrees(m.spin_rate(True)):.0f} deg/s '
+              f'+{m.cw_offset} deg coast', flush=True)
+        print(f'Sensor correction: range*{self.range_scale:.4f}{self.range_offset:+.4f} m, '
+              f'bearing -({math.degrees(self.bearing_offset):+.2f} deg); R x{args.r_scale}, '
+              f'Q x{args.q_scale}', flush=True)
+        print(f'Path: {args.path} side {side:.2f} m, {args.laps} lap(s), {args.direction}, '
+              f'{len(self.waypoints)} waypoints', flush=True)
+        print('MODE: DRIVE ENABLED' if self.drive else
+              'MODE: PREVIEW (motors disabled, rover never moves)', flush=True)
+        print(f'Logs: {self.run_dir}', flush=True)
+
+    # ----------------------------------------------------------------- utils
+    def now(self):
+        return time.monotonic()
+
+    def elapsed(self):
+        return self.now() - self.started
+
+    def set_phase(self, phase, duration=0.0):
+        self.phase = phase
+        self.phase_start = self.now()
+        self.phase_until = self.phase_start + duration
+        self.log_state(force=True)
+
+    def send(self, left=0.0, right=0.0):
+        if not self.drive or self.done:
+            left = right = 0.0
+        limit = max(self.model.drive_cmd * (1 + abs(self.model.trim)) + MAX_STEER, self.model.spin_cmd)
+        left = max(-limit, min(limit, float(left)))
+        right = max(-limit, min(limit, float(right)))
+        msg = Float32MultiArray()
+        msg.data = [left, right]
+        self.motor_pub.publish(msg)
+        self.command = (left, right)
+
+    # -------------------------------------------------------------- camera
+    def on_tf(self, message):
+        observations = [o for o in (measure(t) for t in message.transforms) if o is not None]
+        if not observations:
+            return
+        self.frame_seq += 1
+        if self.phase in ('INIT', 'OBSERVE', 'HOLD'):   # rover standing still
+            self.frame_queue.append((self.frame_seq, observations))
+        else:
+            for o in observations:
+                self.log_observation(self.frame_seq, o, None, None, f'ignored_{self.phase.lower()}')
+
+    def corrected(self, o):
+        rng = self.range_scale * o['range'] + self.range_offset
+        bearing = wrap_angle(o['bearing'] - self.bearing_offset)
+        return rng, bearing
+
+    def log_observation(self, frame, o, rng, bearing, status):
+        self.obs.writerow([f'{self.elapsed():.3f}', frame, self.phase, o['tag_id'],
+                           f'{o["range"]:.5f}', f'{math.degrees(o["bearing"]):.4f}',
+                           '' if rng is None else f'{rng:.5f}',
+                           '' if bearing is None else f'{math.degrees(bearing):.4f}',
+                           f'{o["view_deg"]:.1f}', status])
+
+    def process_frames(self):
+        """Buffer corrected observations of the current stop (no EKF update yet)."""
+        queue, self.frame_queue = self.frame_queue, []
+        for frame, observations in queue:
+            used = False
+            for o in observations:
+                rng, bearing = self.corrected(o)
+                if rng > self.args.max_range:
+                    self.log_observation(frame, o, rng, bearing, 'too_far')
+                elif o['view_deg'] > self.args.max_view_deg:
+                    self.log_observation(frame, o, rng, bearing, 'too_oblique')
+                else:
+                    self.stop_buffer.setdefault(o['tag_id'], []).append((rng, bearing))
+                    self.log_observation(frame, o, rng, bearing, 'buffered')
+                    used = True
+            self.stop_frames += used
+
+    def apply_stop_updates(self):
+        """One EKF update per tag from the frames of this stop, then clear the buffer.
+
+        Known landmarks first, so new ones are initialized from the corrected
+        pose. A new tag ID needs min_new_frames frames in this stop (guards
+        against a one-frame false detection creating a landmark).
+        """
+        buffer, self.stop_buffer = self.stop_buffer, {}
+        order = sorted(buffer, key=lambda t: (t not in self.slam.index, t))
+        lap, side_k = (self.waypoints[self.wp_index][2:] if self.wp_index < len(self.waypoints)
+                       else ('', ''))
+        for tag_id in order:
+            samples = np.array(buffer[tag_id])
+            n = len(samples)
+            rng = float(samples[:, 0].mean())
+            bearing = math.atan2(np.sin(samples[:, 1]).mean(), np.cos(samples[:, 1]).mean())
+            r_std = float(samples[:, 0].std())
+            d = samples[:, 1] - bearing
+            b_std = float(np.degrees(np.arctan2(np.sin(d), np.cos(d)).std()))
+            if tag_id not in self.slam.index and n < self.args.min_new_frames:
+                status, nis = 'unconfirmed_new', float('nan')
+            else:
+                self.slam.last_nis = float('nan')
+                status = self.slam.update(tag_id, rng, bearing)
+                nis = self.slam.last_nis
+                self.stop_tags.add(tag_id)
+            x, y, yaw = self.slam.robot_pose
+            self.upd.writerow([f'{self.elapsed():.3f}', lap, side_k, tag_id, n, f'{rng:.5f}',
+                               f'{math.degrees(bearing):.4f}', f'{r_std:.5f}', f'{b_std:.4f}',
+                               status, '' if math.isnan(nis) else f'{nis:.3f}',
+                               f'{x:.4f}', f'{y:.4f}', f'{math.degrees(yaw):.3f}'])
+            if status == 'new':
+                m = self.slam.landmarks()[tag_id][0]
+                print(f'  NEW landmark {tag_id} at ({m[0]:+.2f}, {m[1]:+.2f}) m from {n} frames '
+                      f'[{len(self.slam.index)} mapped]', flush=True)
+            elif status == 'rejected':
+                print(f'  tag {tag_id} REJECTED by gate (NIS {nis:.1f})', flush=True)
+
+    # ------------------------------------------------------------ motion
+    def integrate_motion(self, now):
+        """EKF prediction with the commanded motion since the last call."""
+        if self.last_predict is not None:
+            dt = now - self.last_predict
+            v, omega = self.motion
+            if dt > 0 and (v or omega):
+                self.slam.predict(v * dt, omega * dt)
+        self.last_predict = now
+
+    def start_turn(self, error):
+        ccw = error > 0
+        omega = self.model.spin_rate(clockwise=not ccw)
+        coast = math.radians(self.model.spin_offset if ccw else self.model.cw_offset)
+        duration = min(3.0, max(MIN_PULSE_S, (abs(error) - coast) / omega))
+        sign = 1.0 if ccw else -1.0
+        c = self.model.spin_cmd
+        self.command_target = (-sign * c, sign * c)
+        self.motion = (0.0, sign * omega)
+        self.turn_coast = sign * coast
+        self.last_predict = self.now()
+        self.turn_tries += 1
+        print(f'  TURN {math.degrees(error):+.1f} deg: {duration:.2f} s spin + '
+              f'{math.degrees(coast):.1f} deg coast (HW1)', flush=True)
+        self.set_phase('TURN', duration)
+
+    def start_drive(self, distance, heading_error):
+        m = self.model
+        speed = m.speed_per_cmd * m.drive_cmd
+        duration = distance / speed
+        # Remove a small heading error during the segment: omega = k (R-L) / W.
+        # Trim only cancels the rover's physical drift, so it is NOT part of the
+        # predicted rotation.
+        steer = heading_error / duration * m.wheel_base / (2 * m.speed_per_cmd)
+        steer = max(-MAX_STEER, min(MAX_STEER, steer))
+        left = m.drive_cmd * (1 + m.trim) - steer
+        right = m.drive_cmd * (1 - m.trim) + steer
+        self.command_target = (left, right)
+        self.motion = (speed, 2 * m.speed_per_cmd * steer / m.wheel_base)
+        self.last_predict = self.now()
+        self.set_phase('DRIVE', duration)
+
+    def stop_motion(self, now):
+        self.integrate_motion(now)
+        if self.phase == 'TURN' and self.turn_coast:
+            # HW1: the rover keeps turning ~spin_offset after the spin stops.
+            self.slam.predict(0.0, self.turn_coast)
+            self.slam.add_robot_noise(np.diag([0.0, 0.0, self.turn_coast_var]))
+        self.motion = (0.0, 0.0)
+        self.turn_coast = 0.0
+        self.command_target = (0.0, 0.0)
+        self.set_phase('SETTLE', self.args.settle)
+
+    # ------------------------------------------------------------- planning
+    def plan(self):
+        if self.wp_index >= len(self.waypoints):
+            self.finish('route complete')
+            return
+        gx, gy, lap, side_k = self.waypoints[self.wp_index]
+        x, y, yaw = self.slam.robot_pose
+        dist = math.hypot(gx - x, gy - y)
+        error = wrap_angle(math.atan2(gy - y, gx - x) - yaw)
+        overshot = dist < 2 * self.args.pos_tol and abs(error) > math.pi / 2
+        if dist < self.args.pos_tol or overshot:
+            self.reach_vertex(lap, side_k, dist)
+            return
+        if abs(error) > math.radians(self.args.turn_tol_deg) and \
+                self.turn_tries < self.args.max_turn_tries:
+            # Turn at most max_turn_step_deg at a time and observe in between, so
+            # already-mapped tags and newly seen tags share a view (landmark
+            # handoff): new tags are then initialized from a corrected heading
+            # instead of inheriting the coast error of a full 90-degree spin.
+            step = math.radians(self.args.max_turn_step_deg)
+            self.start_turn(max(-step, min(step, error)))
+            return
+        self.turn_tries = 0
+        self.start_drive(min(self.args.segment, dist), error)
+
+    def reach_vertex(self, lap, side_k, dist):
+        x, y, yaw = self.slam.robot_pose
+        cov = self.slam.robot_cov
+        self.vertex_rows.append([lap, side_k, f'{self.elapsed():.2f}', f'{x:.4f}', f'{y:.4f}',
+                                 f'{math.degrees(yaw):.2f}', f'{math.sqrt(cov[0, 0]):.4f}',
+                                 f'{math.sqrt(cov[1, 1]):.4f}', f'{dist:.4f}'])
+        print(f'VERTEX lap {lap} #{side_k}: est ({x:+.3f}, {y:+.3f}) m, '
+              f'{math.degrees(yaw):+.1f} deg, {len(self.slam.index)} landmarks', flush=True)
+        sides = 4 if self.args.path == 'square' else 8
+        if side_k == sides:
+            self.save_snapshot(f'end of lap {lap}', lap)
+        self.wp_index += 1
+        self.turn_tries = 0
+        if self.args.vertex_hold > 0:
+            self.set_phase('HOLD', self.args.vertex_hold)
+
+    # ------------------------------------------------------------ main loop
+    def tick(self):
+        now = self.now()
+        if self.done:
+            self.send(0, 0)
+            return
+        if self.drive and self.phase not in ('INIT',) and self.motor_pub.get_subscription_count() == 0:
+            self.finish('motor node disconnected')
+            return
+        if self.elapsed() > self.args.max_run_s:
+            self.finish('max run time')
+            return
+
+        if self.phase == 'INIT':
+            self.process_frames()
+            if not self.drive:
+                # Preview: one batched update every 2 s so the printed map stays current.
+                if now - self.last_preview_print > 2.0:
+                    self.last_preview_print = now
+                    self.apply_stop_updates()
+                    self.print_map('PREVIEW')
+            elif now >= self.phase_until:
+                self.apply_stop_updates()
+                motor_ready = self.motor_pub.get_subscription_count() > 0
+                if self.slam.index and motor_ready:
+                    self.print_map('START')
+                    self.save_snapshot('start', 0)
+                    self.set_phase('PLAN')
+                else:
+                    print('WAITING: ' + ('no landmark confirmed yet' if not self.slam.index
+                                         else 'motor_control not connected'), flush=True)
+                    self.set_phase('INIT', self.args.init_observe)
+        elif self.phase in ('TURN', 'DRIVE'):
+            self.integrate_motion(now)
+            if now >= self.phase_until:
+                self.stop_motion(now)
+        elif self.phase == 'SETTLE':
+            self.frame_queue.clear()
+            if now >= self.phase_until:
+                self.stop_buffer = {}
+                self.stop_frames = 0
+                self.stop_tags = set()
+                self.set_phase('OBSERVE', self.args.observe)
+        elif self.phase == 'OBSERVE':
+            self.process_frames()
+            if now >= self.phase_until:
+                self.apply_stop_updates()
+                self.end_observe()
+        elif self.phase == 'HOLD':
+            self.process_frames()
+            if now >= self.phase_until:
+                self.apply_stop_updates()
+                self.set_phase('PLAN')
+        if self.phase == 'PLAN':
+            self.plan()
+
+        left, right = self.command_target if self.phase in ('TURN', 'DRIVE') else (0.0, 0.0)
+        self.send(left, right)
+        self.log_state()
+
+    def end_observe(self):
+        x, y, yaw = self.slam.robot_pose
+        std = math.sqrt(self.slam.robot_cov[0, 0] + self.slam.robot_cov[1, 1])
+        tags = ','.join(str(t) for t in sorted(self.stop_tags)) or '-'
+        print(f'STOP wp {self.wp_index + 1}/{len(self.waypoints)}: '
+              f'({x:+.3f}, {y:+.3f}) m {math.degrees(yaw):+.1f} deg, '
+              f'pos std {100 * std:.1f} cm, {self.stop_frames} frames, tags {tags}, '
+              f'{len(self.slam.index)} mapped', flush=True)
+        self.lost_stops = 0 if self.stop_tags else self.lost_stops + 1
+        if self.lost_stops >= self.args.lost_stops:
+            self.finish(f'no landmark seen in {self.lost_stops} consecutive stops')
+        elif std > MAX_ROBOT_STD_M:
+            self.finish('robot position too uncertain')
+        else:
+            self.set_phase('PLAN')
+
+    # ------------------------------------------------------------- output
+    def log_state(self, force=False):
+        now = self.now()
+        if not force and now - self.last_log < LOG_PERIOD_S:
+            return
+        self.last_log = now
+        x, y, yaw = self.slam.robot_pose
+        P = self.slam.robot_cov
+        lap, side_k = (self.waypoints[self.wp_index][2:] if self.wp_index < len(self.waypoints)
+                       else ('', ''))
+        self.traj.writerow([f'{self.elapsed():.3f}', self.phase, lap, side_k, f'{x:.4f}',
+                            f'{y:.4f}', f'{math.degrees(yaw):.3f}', f'{P[0, 0]:.3e}',
+                            f'{P[0, 1]:.3e}', f'{P[1, 1]:.3e}',
+                            f'{math.degrees(math.sqrt(P[2, 2])):.3f}', len(self.slam.index),
+                            f'{self.command[0]:.3f}', f'{self.command[1]:.3f}'])
+
+    def print_map(self, title):
+        x, y, yaw = self.slam.robot_pose
+        print(f'{title}: robot ({x:+.3f}, {y:+.3f}) m {math.degrees(yaw):+.1f} deg, '
+              f'{len(self.slam.index)} landmark(s)', flush=True)
+        for tag_id, (m, C) in sorted(self.slam.landmarks().items()):
+            st = self.slam.stats[tag_id]
+            print(f'   tag {tag_id}: ({m[0]:+.3f}, {m[1]:+.3f}) m, std '
+                  f'({100 * math.sqrt(C[0, 0]):.1f}, {100 * math.sqrt(C[1, 1]):.1f}) cm, '
+                  f'{st["updates"]} updates, {st["rejected"]} rejected', flush=True)
+
+    def save_snapshot(self, reason, lap):
+        snap = self.slam.snapshot()
+        snap.update({'reason': reason, 'lap': lap, 't_s': self.elapsed()})
+        self.snapshots.append(snap)
+        (self.run_dir / 'snapshots.json').write_text(json.dumps(self.snapshots))
+
+    def finish(self, reason):
+        if self.done:
+            return
+        self.finish_reason = reason
+        self.done = True
+        self.phase = 'DONE'
+        self.send(0, 0)
+        print(f'FINISHED: {reason}', flush=True)
+        self.print_map('FINAL MAP')
+
+    def close(self):
+        try:
+            for _ in range(3):
+                self.done = True
+                self.send(0, 0)
+                time.sleep(0.05)
+        except Exception:
+            pass
+        self.save_snapshot(f'final ({self.finish_reason or "interrupted"})', -1)
+        with open(self.run_dir / 'vertices.csv', 'w', newline='', encoding='utf-8') as f:
+            w = csv.writer(f)
+            w.writerow(['lap', 'side', 't_s', 'x_m', 'y_m', 'yaw_deg', 'std_x_m', 'std_y_m',
+                        'dist_to_target_m'])
+            w.writerows(self.vertex_rows)
+        self.traj_file.close()
+        self.obs_file.close()
+        self.upd_file.close()
+        print(f'Saved run to {self.run_dir}', flush=True)
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--drive', action='store_true', help='enable motors (default: preview only)')
+    p.add_argument('--path', choices=['square', 'octagon'], default='square')
+    p.add_argument('--side', type=float, default=None,
+                   help='side length in m (default 1.2 square, 0.5 octagon)')
+    p.add_argument('--laps', type=int, default=1)
+    p.add_argument('--direction', choices=['ccw', 'cw'], default='ccw')
+    p.add_argument('--label', default=None, help='name of the run folder')
+    p.add_argument('--segment', type=float, default=0.30, help='max straight segment between stops (m)')
+    p.add_argument('--settle', type=float, default=0.5, help='wait after stopping before observing (s)')
+    p.add_argument('--observe', type=float, default=1.0, help='observation time per stop (s)')
+    p.add_argument('--init-observe', type=float, default=3.0, help='observation time at the start (s)')
+    p.add_argument('--vertex-hold', type=float, default=0.0,
+                   help='extra stop at each vertex, e.g. to mark the real position (s)')
+    p.add_argument('--pos-tol', type=float, default=0.05, help='vertex reached within (m)')
+    p.add_argument('--turn-tol-deg', type=float, default=8.0,
+                   help='spin in place above this heading error; steer while driving below it')
+    p.add_argument('--max-turn-step-deg', type=float, default=45.0,
+                   help='largest in-place turn between two observation stops')
+    p.add_argument('--max-turn-tries', type=int, default=6,
+                   help='in-place turns per segment before driving anyway')
+    p.add_argument('--max-range', type=float, default=2.6, help='ignore tags farther than this (m)')
+    p.add_argument('--max-view-deg', type=float, default=60.0, help='ignore tags seen more obliquely')
+    p.add_argument('--min-new-frames', type=int, default=3,
+                   help='frames of a new tag ID needed in one stop before it becomes a landmark')
+    p.add_argument('--r-scale', type=float, default=2.0, help='multiply calibrated R std devs')
+    p.add_argument('--q-scale', type=float, default=1.0, help='multiply Q variances')
+    p.add_argument('--turn-coast-std-deg', type=float, default=8.0,
+                   help='extra heading std per in-place turn (coast uncertainty)')
+    p.add_argument('--lost-stops', type=int, default=3,
+                   help='stop the run after this many stops without any landmark')
+    p.add_argument('--max-run-s', type=float, default=900.0)
+    return p.parse_args(argv)
+
+
+def main():
+    args = parse_args()
+    rclpy.init()
+    node = SlamNode(args)
+    try:
+        while rclpy.ok() and not node.done:
+            rclpy.spin_once(node, timeout_sec=0.05)
+    except KeyboardInterrupt:
+        print('Interrupted -- stopping motors.', flush=True)
+    finally:
+        node.close()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

@@ -141,6 +141,7 @@ class EKFSLAM:
         self.P = np.eye(ROBOT_DIM) * init_pose_var
         self.index = {}   # tag_id -> start index of (m_x, m_y) in x
         self.stats = {}   # tag_id -> {'seen', 'updates', 'rejected'}
+        self.last_nis = float('nan')  # NIS of the latest known-landmark observation
 
     # ------------------------------------------------------------ prediction
     def predict(self, d, a):
@@ -164,6 +165,10 @@ class EKFSLAM:
         self.P[r, r] = F_r @ self.P[r, r] @ F_r.T + Q_r
         self.P[r, m] = F_r @ self.P[r, m]
         self.P[m, r] = self.P[r, m].T
+
+    def add_robot_noise(self, Q_r):
+        """Add extra process noise to the robot block only (e.g. per-turn coast error)."""
+        self.P[:ROBOT_DIM, :ROBOT_DIM] += np.asarray(Q_r, dtype=float)
 
     def predict_velocity(self, v, omega, dt):
         """Convenience wrapper: HW1 Model.twist() gives (v, omega) per command."""
@@ -208,10 +213,11 @@ class EKFSLAM:
 
         y = np.array([rng - z_hat[0], wrap_angle(bearing - z_hat[1])])  # innovation
         S = H @ self.P @ H.T + R
-        if st['updates'] >= self.gate_min_updates:
-            if float(y @ np.linalg.solve(S, y)) > self.gate_chi2:
-                st['rejected'] += 1
-                return 'rejected'
+        # NIS = y^T S^-1 y; averages ~2 (2 DoF) when Q and R are consistent.
+        self.last_nis = float(y @ np.linalg.solve(S, y))
+        if st['updates'] >= self.gate_min_updates and self.last_nis > self.gate_chi2:
+            st['rejected'] += 1
+            return 'rejected'
 
         K = np.linalg.solve(S, H @ self.P).T          # K = P H^T S^-1  (S symmetric)
         self.x = self.x + K @ y
