@@ -116,6 +116,10 @@ class SlamNode(Node):
 
         side = args.side if args.side is not None else (1.2 if args.path == 'square' else 0.5)
         self.side = side
+        # Square corners (90 deg) -> 3 x 30 deg (limit 35 so 90-105 deg is 3 steps),
+        # so a stop sees both walls; octagon corners (45 deg) stay one step (limit 50).
+        self.max_turn_step_deg = args.max_turn_step_deg if args.max_turn_step_deg is not None \
+            else (35.0 if args.path == 'square' else 50.0)
         self.waypoints = make_waypoints(args.path, side, args.laps, args.direction)
         self.wp_index = 0
 
@@ -393,8 +397,9 @@ class SlamNode(Node):
             # already-mapped tags and newly seen tags share a view (landmark
             # handoff): new tags are then initialized from a corrected heading
             # instead of inheriting the coast error of a full 90-degree spin.
-            step = math.radians(self.args.max_turn_step_deg)
-            self.start_turn(max(-step, min(step, error)))
+            # Equal steps (e.g. 90 deg -> 3 x 30 deg), never a tiny leftover step.
+            steps = math.ceil(abs(error) / math.radians(self.max_turn_step_deg) - 1e-9)
+            self.start_turn(error / max(1, steps))
             return
         self.turn_tries = 0
         self.start_drive(min(self.args.segment, dist), error)
@@ -578,8 +583,9 @@ def parse_args(argv=None):
     p.add_argument('--pos-tol', type=float, default=0.05, help='vertex reached within (m)')
     p.add_argument('--turn-tol-deg', type=float, default=8.0,
                    help='spin in place above this heading error; steer while driving below it')
-    p.add_argument('--max-turn-step-deg', type=float, default=45.0,
-                   help='largest in-place turn between two observation stops')
+    p.add_argument('--max-turn-step-deg', type=float, default=None,
+                   help='largest in-place turn between two observation stops '
+                        '(default 35 for square, 50 for octagon)')
     p.add_argument('--max-turn-tries', type=int, default=6,
                    help='in-place turns per segment before driving anyway')
     p.add_argument('--max-range', type=float, default=2.6, help='ignore tags farther than this (m)')

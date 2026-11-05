@@ -10,15 +10,15 @@
 field_side_m: 2.44          # 8 ft = 2.438 m (handout minimum)
 diagonals_m: [null, null]   # both diagonals, as a squareness check (ideal 3.451 m)
 
-tags:                       # id: {x, y, wall}
-  1: {x: 0.000, y: 0.530, wall: x=0}
-  2: {x: 0.000, y: 1.555, wall: x=0}
-  3: {x: 0.790, y: 2.440, wall: y=2.44}
-  4: {x: 1.810, y: 2.440, wall: y=2.44}
-  5: {x: 2.440, y: 1.595, wall: x=2.44}
-  7: {x: 2.440, y: 0.570, wall: x=2.44}
-  8: {x: 1.770, y: 0.000, wall: y=0}
-  9: {x: 0.750, y: 0.000, wall: y=0}
+tags:                       # id: {x, y, wall}; at 1/3 and 2/3 of each wall
+  1: {x: 0.000, y: 0.820, wall: x=0}
+  2: {x: 0.000, y: 1.640, wall: x=0}
+  3: {x: 0.820, y: 2.440, wall: y=2.44}
+  4: {x: 1.640, y: 2.440, wall: y=2.44}
+  5: {x: 2.440, y: 1.640, wall: x=2.44}
+  7: {x: 2.440, y: 0.820, wall: x=2.44}
+  8: {x: 1.640, y: 0.000, wall: y=0}
+  9: {x: 0.820, y: 0.000, wall: y=0}
 
 # Robot reference point (ground point 9 cm behind the camera lens) and heading
 # at the start of each run. yaw_deg: 0 = facing +x, CCW positive.
