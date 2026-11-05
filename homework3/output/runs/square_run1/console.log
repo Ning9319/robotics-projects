@@ -1,0 +1,178 @@
+HW1 model: speed_per_cmd=1.31, drive_cmd=0.2, spin_cmd=0.35, trim=0.04, CCW 100 deg/s +0.0 deg coast, CW 132 deg/s +3.2 deg coast, drive wheel base 1.55 m
+Sensor correction: range*0.9885-0.0063 m, bearing -(-1.00 deg); R x2.0, Q x1.0
+Path: square side 1.20 m, 3 lap(s), ccw, 12 waypoints
+MODE: DRIVE ENABLED
+Logs: /home/ubuntu/ros2_ws/src/robotics-projects/homework3/output/runs/square_run1
+WAITING: no landmark confirmed yet
+  NEW landmark 5 at (+1.81, +0.97) m from 24 frames [1 mapped]
+  NEW landmark 7 at (+1.78, +0.17) m from 24 frames [2 mapped]
+  NEW landmark 8 at (+1.02, -0.63) m from 24 frames [3 mapped]
+START: robot (+0.000, +0.000) m +0.0 deg, 3 landmark(s)
+   tag 5: (+1.806, +0.969) m, std (2.3, 3.3) cm, 0 updates, 0 rejected
+   tag 7: (+1.778, +0.171) m, std (1.6, 3.1) cm, 0 updates, 0 rejected
+   tag 8: (+1.017, -0.635) m, std (1.6, 1.9) cm, 0 updates, 0 rejected
+STOP wp 1/12: (+0.279, -0.002) m -0.1 deg, pos std 3.0 cm, yaw std 1.3 deg, 6 frames, tags 5,7, 3 mapped
+STOP wp 1/12: (+0.564, -0.002) m +0.4 deg, pos std 3.4 cm, yaw std 1.5 deg, 6 frames, tags 5,7, 3 mapped
+STOP wp 1/12: (+0.861, -0.001) m -0.1 deg, pos std 3.9 cm, yaw std 2.2 deg, 6 frames, tags 7, 3 mapped
+STOP wp 1/12: (+1.146, -0.003) m +0.1 deg, pos std 3.9 cm, yaw std 2.9 deg, 8 frames, tags 7, 3 mapped
+STOP wp 1/12: (+1.193, -0.003) m +1.6 deg, pos std 3.9 cm, yaw std 3.1 deg, 7 frames, tags 7, 3 mapped
+VERTEX lap 1 #1: est (+1.193, -0.003) m, +1.6 deg, 3 landmarks
+  TURN +29.4 deg: 0.29 s spin + 0.0 deg coast
+STOP wp 2/12: (+1.189, -0.006) m +38.9 deg, pos std 3.0 cm, yaw std 1.8 deg, 7 frames, tags 5,7, 3 mapped
+  TURN +25.3 deg: 0.25 s spin + 0.0 deg coast
+  NEW landmark 4 at (+1.07, +1.78) m from 5 frames [4 mapped]
+STOP wp 2/12: (+1.190, -0.008) m +71.1 deg, pos std 2.9 cm, yaw std 1.8 deg, 5 frames, tags 4,5, 4 mapped
+  TURN +18.4 deg: 0.18 s spin + 0.0 deg coast
+  NEW landmark 3 at (+0.27, +1.81) m from 3 frames [5 mapped]
+STOP wp 2/12: (+1.190, -0.009) m +97.2 deg, pos std 2.9 cm, yaw std 1.7 deg, 3 frames, tags 3,4,5, 5 mapped
+STOP wp 2/12: (+1.180, +0.270) m +88.7 deg, pos std 3.9 cm, yaw std 2.0 deg, 7 frames, tags 3,4, 5 mapped
+STOP wp 2/12: (+1.189, +0.570) m +88.7 deg, pos std 4.2 cm, yaw std 2.2 deg, 7 frames, tags 3,4, 5 mapped
+STOP wp 2/12: (+1.196, +0.873) m +88.7 deg, pos std 4.8 cm, yaw std 2.7 deg, 6 frames, tags 4, 5 mapped
+STOP wp 2/12: (+1.204, +1.177) m +88.9 deg, pos std 5.0 cm, yaw std 3.4 deg, 10 frames, tags 4, 5 mapped
+VERTEX lap 1 #2: est (+1.204, +1.177) m, +88.9 deg, 5 landmarks
+  TURN +30.0 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 3/12: (+1.203, +1.180) m +129.3 deg, pos std 5.0 cm, yaw std 3.5 deg, 6 frames, tags 4, 5 mapped
+  TURN +24.9 deg: 0.25 s spin + 0.0 deg coast
+  NEW landmark 2 at (-0.59, +1.07) m from 9 frames [6 mapped]
+STOP wp 3/12: (+1.205, +1.180) m +157.5 deg, pos std 4.5 cm, yaw std 2.4 deg, 9 frames, tags 2,3, 6 mapped
+  TURN +21.6 deg: 0.22 s spin + 0.0 deg coast
+  NEW landmark 1 at (-0.64, +0.26) m from 13 frames [7 mapped]
+STOP wp 3/12: (+1.205, +1.180) m -172.1 deg, pos std 4.5 cm, yaw std 2.8 deg, 13 frames, tags 1,2, 7 mapped
+  TURN -8.8 deg: 0.10 s spin + 3.2 deg coast
+STOP wp 3/12: (+1.207, +1.180) m +176.3 deg, pos std 4.5 cm, yaw std 2.3 deg, 7 frames, tags 1,2,3, 7 mapped
+STOP wp 3/12: (+0.913, +1.198) m +178.3 deg, pos std 5.4 cm, yaw std 2.6 deg, 5 frames, tags 1,2, 7 mapped
+STOP wp 3/12: (+0.625, +1.206) m +179.7 deg, pos std 5.9 cm, yaw std 2.7 deg, 5 frames, tags 1,2, 7 mapped
+STOP wp 3/12: (+0.325, +1.210) m +179.8 deg, pos std 6.6 cm, yaw std 3.1 deg, 8 frames, tags 2, 7 mapped
+STOP wp 3/12: (+0.036, +1.211) m -179.2 deg, pos std 7.3 cm, yaw std 3.7 deg, 7 frames, tags 2, 7 mapped
+VERTEX lap 1 #3: est (+0.036, +1.211) m, -179.2 deg, 7 landmarks
+  TURN +29.2 deg: 0.29 s spin + 0.0 deg coast
+STOP wp 4/12: (+0.039, +1.218) m -140.1 deg, pos std 6.8 cm, yaw std 2.8 deg, 6 frames, tags 1,2, 7 mapped
+  TURN +24.1 deg: 0.24 s spin + 0.0 deg coast
+  NEW landmark 9 at (+0.12, -0.60) m from 9 frames [8 mapped]
+STOP wp 4/12: (+0.039, +1.222) m -107.6 deg, pos std 6.8 cm, yaw std 2.8 deg, 9 frames, tags 1,9, 8 mapped
+  TURN +15.7 deg: 0.16 s spin + 0.0 deg coast
+STOP wp 4/12: (+0.041, +1.197) m -84.7 deg, pos std 4.9 cm, yaw std 1.6 deg, 11 frames, tags 1,8,9, 8 mapped
+STOP wp 4/12: (+0.053, +0.919) m -90.0 deg, pos std 5.1 cm, yaw std 1.7 deg, 9 frames, tags 8,9, 8 mapped
+STOP wp 4/12: (+0.046, +0.632) m -93.5 deg, pos std 5.0 cm, yaw std 1.9 deg, 6 frames, tags 8,9, 8 mapped
+STOP wp 4/12: (+0.024, +0.344) m -94.8 deg, pos std 5.2 cm, yaw std 2.5 deg, 8 frames, tags 9, 8 mapped
+STOP wp 4/12: (-0.002, +0.069) m -94.5 deg, pos std 5.1 cm, yaw std 3.1 deg, 9 frames, tags 9, 8 mapped
+STOP wp 4/12: (-0.007, +0.014) m -92.3 deg, pos std 5.1 cm, yaw std 3.3 deg, 10 frames, tags 9, 8 mapped
+VERTEX lap 1 #4: est (-0.007, +0.014) m, -92.3 deg, 8 landmarks
+  TURN +30.5 deg: 0.31 s spin + 0.0 deg coast
+STOP wp 5/12: (-0.016, +0.020) m -46.2 deg, pos std 4.3 cm, yaw std 2.1 deg, 3 frames, tags 8,9, 8 mapped
+  TURN +22.6 deg: 0.23 s spin + 0.0 deg coast
+STOP wp 5/12: (-0.020, +0.025) m -12.3 deg, pos std 2.7 cm, yaw std 1.1 deg, 4 frames, tags 5,7,8, 8 mapped
+  TURN +11.1 deg: 0.11 s spin + 0.0 deg coast
+STOP wp 5/12: (-0.023, +0.026) m -0.4 deg, pos std 2.5 cm, yaw std 1.1 deg, 6 frames, tags 5,7,8, 8 mapped
+STOP wp 5/12: (+0.261, +0.019) m -0.9 deg, pos std 3.3 cm, yaw std 1.4 deg, 5 frames, tags 5,7, 8 mapped
+STOP wp 5/12: (+0.545, +0.013) m -1.5 deg, pos std 3.3 cm, yaw std 1.5 deg, 8 frames, tags 5,7, 8 mapped
+STOP wp 5/12: (+0.838, +0.006) m -1.2 deg, pos std 3.7 cm, yaw std 2.2 deg, 7 frames, tags 7, 8 mapped
+STOP wp 5/12: (+1.125, +0.000) m -0.9 deg, pos std 3.7 cm, yaw std 2.8 deg, 9 frames, tags 7, 8 mapped
+STOP wp 5/12: (+1.184, -0.002) m -0.0 deg, pos std 3.7 cm, yaw std 3.0 deg, 10 frames, tags 7, 8 mapped
+VERTEX lap 2 #1: est (+1.184, -0.002) m, -0.0 deg, 8 landmarks
+  TURN +29.8 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 6/12: (+1.179, -0.004) m +41.3 deg, pos std 2.6 cm, yaw std 1.6 deg, 5 frames, tags 5,7, 8 mapped
+  TURN +23.8 deg: 0.24 s spin + 0.0 deg coast
+STOP wp 6/12: (+1.181, -0.011) m +73.8 deg, pos std 2.3 cm, yaw std 1.3 deg, 5 frames, tags 4,5, 8 mapped
+  TURN +15.4 deg: 0.15 s spin + 0.0 deg coast
+STOP wp 6/12: (+1.181, -0.011) m +93.6 deg, pos std 2.2 cm, yaw std 1.2 deg, 6 frames, tags 3,4,5, 8 mapped
+STOP wp 6/12: (+1.180, +0.283) m +89.1 deg, pos std 3.4 cm, yaw std 1.5 deg, 5 frames, tags 3,4, 8 mapped
+STOP wp 6/12: (+1.188, +0.590) m +89.3 deg, pos std 3.6 cm, yaw std 1.7 deg, 6 frames, tags 3,4, 8 mapped
+STOP wp 6/12: (+1.194, +0.888) m +88.5 deg, pos std 4.2 cm, yaw std 2.3 deg, 5 frames, tags 4, 8 mapped
+STOP wp 6/12: (+1.202, +1.195) m +88.7 deg, pos std 4.4 cm, yaw std 3.1 deg, 6 frames, tags 4, 8 mapped
+VERTEX lap 2 #2: est (+1.202, +1.195) m, +88.7 deg, 8 landmarks
+  TURN +30.3 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 7/12: (+1.202, +1.194) m +128.5 deg, pos std 4.3 cm, yaw std 3.2 deg, 6 frames, tags 4, 8 mapped
+  TURN +25.6 deg: 0.26 s spin + 0.0 deg coast
+STOP wp 7/12: (+1.216, +1.197) m +161.6 deg, pos std 3.5 cm, yaw std 1.4 deg, 4 frames, tags 2,3, 8 mapped
+  TURN +18.2 deg: 0.18 s spin + 0.0 deg coast
+STOP wp 7/12: (+1.217, +1.197) m -174.2 deg, pos std 3.4 cm, yaw std 1.2 deg, 5 frames, tags 1,2,3, 8 mapped
+STOP wp 7/12: (+0.928, +1.187) m -179.4 deg, pos std 4.2 cm, yaw std 1.5 deg, 5 frames, tags 1,2, 8 mapped
+STOP wp 7/12: (+0.636, +1.190) m +179.8 deg, pos std 4.3 cm, yaw std 1.6 deg, 10 frames, tags 1,2, 8 mapped
+STOP wp 7/12: (+0.334, +1.194) m +178.8 deg, pos std 4.8 cm, yaw std 2.3 deg, 6 frames, tags 2, 8 mapped
+STOP wp 7/12: (+0.043, +1.204) m +178.4 deg, pos std 4.9 cm, yaw std 3.0 deg, 7 frames, tags 2, 8 mapped
+VERTEX lap 2 #3: est (+0.043, +1.204) m, +178.4 deg, 8 landmarks
+  TURN +29.8 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 8/12: (+0.047, +1.205) m -144.0 deg, pos std 4.8 cm, yaw std 3.1 deg, 7 frames, tags 2, 8 mapped
+  TURN +25.9 deg: 0.26 s spin + 0.0 deg coast
+STOP wp 8/12: (+0.042, +1.230) m -107.1 deg, pos std 3.9 cm, yaw std 1.4 deg, 9 frames, tags 1,9, 8 mapped
+  TURN +15.2 deg: 0.15 s spin + 0.0 deg coast
+STOP wp 8/12: (+0.042, +1.232) m -90.8 deg, pos std 3.7 cm, yaw std 1.2 deg, 5 frames, tags 1,8,9, 8 mapped
+STOP wp 8/12: (+0.036, +0.942) m -91.3 deg, pos std 4.1 cm, yaw std 1.4 deg, 5 frames, tags 8,9, 8 mapped
+STOP wp 8/12: (+0.028, +0.649) m -92.2 deg, pos std 4.0 cm, yaw std 1.6 deg, 6 frames, tags 8,9, 8 mapped
+STOP wp 8/12: (+0.014, +0.362) m -92.8 deg, pos std 4.3 cm, yaw std 2.2 deg, 12 frames, tags 9, 8 mapped
+STOP wp 8/12: (-0.004, +0.084) m -92.9 deg, pos std 4.3 cm, yaw std 2.8 deg, 8 frames, tags 9, 8 mapped
+STOP wp 8/12: (-0.007, +0.017) m -90.4 deg, pos std 4.2 cm, yaw std 3.1 deg, 5 frames, tags 9, 8 mapped
+VERTEX lap 2 #4: est (-0.007, +0.017) m, -90.4 deg, 8 landmarks
+  TURN +29.9 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 9/12: (-0.015, +0.022) m -44.8 deg, pos std 3.2 cm, yaw std 1.7 deg, 7 frames, tags 8,9, 8 mapped
+  TURN +21.9 deg: 0.22 s spin + 0.0 deg coast
+STOP wp 9/12: (-0.022, +0.021) m -13.1 deg, pos std 2.5 cm, yaw std 1.1 deg, 11 frames, tags 5,7,8, 8 mapped
+  TURN +12.1 deg: 0.12 s spin + 0.0 deg coast
+STOP wp 9/12: (-0.025, +0.022) m -0.4 deg, pos std 2.4 cm, yaw std 1.1 deg, 7 frames, tags 5,7,8, 8 mapped
+STOP wp 9/12: (+0.255, +0.016) m -0.5 deg, pos std 3.3 cm, yaw std 1.3 deg, 5 frames, tags 5,7, 8 mapped
+STOP wp 9/12: (+0.536, +0.012) m -0.7 deg, pos std 3.3 cm, yaw std 1.5 deg, 7 frames, tags 5,7, 8 mapped
+STOP wp 9/12: (+0.834, +0.008) m -0.9 deg, pos std 3.7 cm, yaw std 2.1 deg, 9 frames, tags 7, 8 mapped
+STOP wp 9/12: (+1.122, +0.001) m -1.2 deg, pos std 3.7 cm, yaw std 2.8 deg, 6 frames, tags 7, 8 mapped
+STOP wp 9/12: (+1.190, -0.002) m -1.2 deg, pos std 3.6 cm, yaw std 3.0 deg, 5 frames, tags 7, 8 mapped
+VERTEX lap 3 #1: est (+1.190, -0.002) m, -1.2 deg, 8 landmarks
+  TURN +30.3 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 10/12: (+1.186, -0.005) m +40.3 deg, pos std 2.5 cm, yaw std 1.6 deg, 5 frames, tags 5,7, 8 mapped
+  TURN +24.6 deg: 0.25 s spin + 0.0 deg coast
+STOP wp 10/12: (+1.187, -0.006) m +70.5 deg, pos std 2.2 cm, yaw std 1.3 deg, 7 frames, tags 4,5, 8 mapped
+  TURN +18.9 deg: 0.19 s spin + 0.0 deg coast
+STOP wp 10/12: (+1.187, -0.007) m +97.3 deg, pos std 2.1 cm, yaw std 1.3 deg, 5 frames, tags 3,4, 8 mapped
+STOP wp 10/12: (+1.176, +0.272) m +90.2 deg, pos std 3.3 cm, yaw std 1.5 deg, 6 frames, tags 3,4, 8 mapped
+STOP wp 10/12: (+1.183, +0.574) m +88.9 deg, pos std 3.5 cm, yaw std 1.6 deg, 6 frames, tags 3,4, 8 mapped
+STOP wp 10/12: (+1.190, +0.866) m +88.3 deg, pos std 4.1 cm, yaw std 2.3 deg, 7 frames, tags 4, 8 mapped
+STOP wp 10/12: (+1.201, +1.180) m +87.9 deg, pos std 4.3 cm, yaw std 3.0 deg, 7 frames, tags 4, 8 mapped
+VERTEX lap 3 #2: est (+1.201, +1.180) m, +87.9 deg, 8 landmarks
+  TURN +30.4 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 11/12: (+1.201, +1.179) m +126.7 deg, pos std 4.2 cm, yaw std 3.1 deg, 5 frames, tags 4, 8 mapped
+  TURN +26.1 deg: 0.26 s spin + 0.0 deg coast
+STOP wp 11/12: (+1.219, +1.183) m +161.5 deg, pos std 3.3 cm, yaw std 1.3 deg, 3 frames, tags 2,3, 8 mapped
+  TURN +17.6 deg: 0.18 s spin + 0.0 deg coast
+STOP wp 11/12: (+1.222, +1.184) m -174.4 deg, pos std 3.2 cm, yaw std 1.2 deg, 10 frames, tags 1,2,3, 8 mapped
+STOP wp 11/12: (+0.935, +1.180) m +179.5 deg, pos std 4.0 cm, yaw std 1.4 deg, 6 frames, tags 1,2, 8 mapped
+STOP wp 11/12: (+0.632, +1.186) m +178.7 deg, pos std 4.1 cm, yaw std 1.6 deg, 10 frames, tags 1,2, 8 mapped
+STOP wp 11/12: (+0.332, +1.196) m +178.1 deg, pos std 4.5 cm, yaw std 2.2 deg, 5 frames, tags 2, 8 mapped
+STOP wp 11/12: (+0.041, +1.207) m +178.6 deg, pos std 4.7 cm, yaw std 3.0 deg, 7 frames, tags 2, 8 mapped
+VERTEX lap 3 #3: est (+0.041, +1.207) m, +178.6 deg, 8 landmarks
+  TURN +29.8 deg: 0.30 s spin + 0.0 deg coast
+STOP wp 12/12: (+0.043, +1.216) m -140.7 deg, pos std 3.9 cm, yaw std 1.7 deg, 7 frames, tags 1,2, 8 mapped
+  TURN +24.4 deg: 0.24 s spin + 0.0 deg coast
+STOP wp 12/12: (+0.042, +1.226) m -104.8 deg, pos std 3.5 cm, yaw std 1.2 deg, 6 frames, tags 1,8,9, 8 mapped
+  TURN +12.9 deg: 0.13 s spin + 0.0 deg coast
+STOP wp 12/12: (+0.042, +1.226) m -91.5 deg, pos std 3.5 cm, yaw std 10.6 deg, 0 frames, tags -, 8 mapped
+  no mapped tag in view and yaw std 10.6 deg -> SEARCH before driving
+  SEARCH 1/12: -30.0 deg: 0.20 s spin + 3.2 deg coast
+STOP wp 12/12: (+0.042, +1.226) m -123.7 deg, pos std 3.5 cm, yaw std 17.1 deg, 0 frames, tags -, 8 mapped
+  SEARCH 2/12: -30.0 deg: 0.20 s spin + 3.2 deg coast
+STOP wp 12/12: (+0.042, +1.226) m -155.7 deg, pos std 3.5 cm, yaw std 21.7 deg, 0 frames, tags -, 8 mapped
+  SEARCH 3/12: -30.0 deg: 0.20 s spin + 3.2 deg coast
+STOP wp 12/12: (+0.042, +1.226) m -174.7 deg, pos std 3.5 cm, yaw std 1.8 deg, 1 frames, tags 2, 8 mapped
+  SEARCH done: mapped tag(s) [2] in view
+  TURN +27.6 deg: 0.28 s spin + 0.0 deg coast
+STOP wp 12/12: (+0.043, +1.226) m -140.2 deg, pos std 3.5 cm, yaw std 1.7 deg, 2 frames, tags 2, 8 mapped
+  TURN +24.1 deg: 0.24 s spin + 0.0 deg coast
+  tag 2 REJECTED by gate (NIS 527.1)
+STOP wp 12/12: (+0.042, +1.233) m -102.6 deg, pos std 3.4 cm, yaw std 1.2 deg, 6 frames, tags 1,2,8,9, 8 mapped
+  TURN +10.7 deg: 0.11 s spin + 0.0 deg coast
+STOP wp 12/12: (+0.041, +1.236) m -97.1 deg, pos std 3.4 cm, yaw std 1.1 deg, 7 frames, tags 1,8,9, 8 mapped
+STOP wp 12/12: (+0.025, +0.970) m -89.0 deg, pos std 4.0 cm, yaw std 1.4 deg, 7 frames, tags 8,9, 8 mapped
+STOP wp 12/12: (+0.025, +0.685) m -91.3 deg, pos std 3.9 cm, yaw std 1.5 deg, 8 frames, tags 8,9, 8 mapped
+STOP wp 12/12: (+0.015, +0.413) m -92.6 deg, pos std 4.2 cm, yaw std 2.1 deg, 3 frames, tags 9, 8 mapped
+STOP wp 12/12: (-0.001, +0.152) m -92.5 deg, pos std 4.2 cm, yaw std 2.7 deg, 2 frames, tags 9, 8 mapped
+STOP wp 12/12: (-0.006, -0.000) m -90.1 deg, pos std 4.1 cm, yaw std 3.0 deg, 9 frames, tags 9, 8 mapped
+VERTEX lap 3 #4: est (-0.006, -0.000) m, -90.1 deg, 8 landmarks
+FINISHED: route complete (0 covariance recoveries, 3 search turns)
+FINAL MAP: robot (-0.006, -0.000) m -90.1 deg, 8 landmark(s)
+   tag 1: (-0.592, +0.207) m, std (1.5, 3.0) cm, 18 updates, 0 rejected
+   tag 2: (-0.563, +1.019) m, std (2.3, 3.0) cm, 23 updates, 1 rejected
+   tag 3: (+0.264, +1.795) m, std (3.3, 2.0) cm, 14 updates, 0 rejected
+   tag 4: (+1.058, +1.770) m, std (3.3, 1.6) cm, 20 updates, 0 rejected
+   tag 5: (+1.805, +0.973) m, std (1.7, 1.9) cm, 18 updates, 0 rejected
+   tag 7: (+1.784, +0.169) m, std (1.1, 1.9) cm, 22 updates, 0 rejected
+   tag 8: (+1.013, -0.635) m, std (1.4, 1.4) cm, 17 updates, 0 rejected
+   tag 9: (+0.209, -0.616) m, std (1.5, 1.8) cm, 23 updates, 0 rejected
+Saved run to /home/ubuntu/ros2_ws/src/robotics-projects/homework3/output/runs/square_run1

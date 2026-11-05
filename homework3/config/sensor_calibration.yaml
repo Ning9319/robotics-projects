@@ -1,7 +1,16 @@
 source_csv:
 - sensor_calibration_20261105_004311.csv
-range_scale: 0.988480153398245
-range_offset_m: -0.006299682796567691
+# Range correction USED by slam_node.py: none (raw AprilTag range).
+# The Step-2 fit below (range shorter by ~1.2% + 0.6 cm) was NOT confirmed:
+#  * HW2's independent tape check found raw ranges unbiased (0.505/1.001/1.505 m
+#    at 0.50/1.00/1.50 m), and
+#  * with the fit applied, every SLAM map came out ~2% too small; re-processing the
+#    same recorded runs without it (homework3/replay.py) gives -0.6%.
+# The Step-2 setup most likely had a systematic distance error (reference point).
+range_scale: 1.0
+range_offset_m: 0.0
+fitted_range_scale: 0.988480153398245
+fitted_range_offset_m: -0.006299682796567691
 bearing_offset_deg: -1.0002041666666668
 range_std_base_m: 0.005
 range_std_per_m: 0.0016760569640204075
