@@ -167,6 +167,7 @@ class SlamNode(Node):
         self.done = False
         self.finish_reason = None
         self.stop_buffer = {}            # tag_id -> [(range, bearing)] of the current stop
+        self.accept_after = 0.0          # wall-clock time: ignore images captured earlier
         self.stop_frames = 0
         self.stop_tags = set()
         self.frame_queue = []
@@ -207,12 +208,12 @@ class SlamNode(Node):
         self.obs_file = open(self.run_dir / 'observations.csv', 'w', newline='', encoding='utf-8')
         self.obs = csv.writer(self.obs_file)
         self.obs.writerow(['t_s', 'frame', 'phase', 'tag_id', 'raw_range_m', 'raw_bearing_deg',
-                           'range_m', 'bearing_deg', 'view_deg', 'status'])
+                           'range_m', 'bearing_deg', 'view_deg', 'status', 'image_age_s'])
         self.upd_file = open(self.run_dir / 'updates.csv', 'w', newline='', encoding='utf-8')
         self.upd = csv.writer(self.upd_file)
         self.upd.writerow(['t_s', 'lap', 'side', 'tag_id', 'n_frames', 'range_m', 'bearing_deg',
                            'range_std_m', 'bearing_std_deg', 'status', 'nis',
-                           'robot_x_m', 'robot_y_m', 'robot_yaw_deg'])
+                           'robot_x_m', 'robot_y_m', 'robot_yaw_deg', 'n_outliers'])
 
         m = self.model
         print(f'HW1 model: speed_per_cmd={m.speed_per_cmd}, drive_cmd={m.drive_cmd}, '
@@ -257,6 +258,9 @@ class SlamNode(Node):
         observations = [o for o in (measure(t) for t in message.transforms) if o is not None]
         if not observations:
             return
+        received = time.time()
+        for o in observations:
+            o['age'] = received - o['stamp']   # image capture -> arrival here (s)
         self.frame_seq += 1
         if self.phase in ('INIT', 'OBSERVE', 'HOLD'):   # rover standing still
             self.frame_queue.append((self.frame_seq, observations))
@@ -274,16 +278,24 @@ class SlamNode(Node):
                            f'{o["range"]:.5f}', f'{math.degrees(o["bearing"]):.4f}',
                            '' if rng is None else f'{rng:.5f}',
                            '' if bearing is None else f'{math.degrees(bearing):.4f}',
-                           f'{o["view_deg"]:.1f}', status])
+                           f'{o["view_deg"]:.1f}', status, f'{o.get("age", float("nan")):.3f}'])
 
     def process_frames(self):
-        """Buffer corrected observations of the current stop (no EKF update yet)."""
+        """Buffer corrected observations of the current stop (no EKF update yet).
+
+        Only images CAPTURED after the rover stopped (+ stamp_margin for the
+        coast) are used. Detections can arrive late in bursts; an image taken
+        before an in-place turn has the right range but a bearing off by the
+        whole turn angle (seen in octagon_run1, 2026-11-05).
+        """
         queue, self.frame_queue = self.frame_queue, []
         for frame, observations in queue:
             used = False
             for o in observations:
                 rng, bearing = self.corrected(o)
-                if rng > self.args.max_range:
+                if o['stamp'] < self.accept_after:
+                    self.log_observation(frame, o, rng, bearing, 'stale')
+                elif rng > self.args.max_range:
                     self.log_observation(frame, o, rng, bearing, 'too_far')
                 elif o['view_deg'] > self.args.max_view_deg:
                     self.log_observation(frame, o, rng, bearing, 'too_oblique')
@@ -324,16 +336,26 @@ class SlamNode(Node):
             self.update_tag(t, averaged[t])
 
     @staticmethod
-    def average(samples):
+    def average(samples, max_dev_bearing=math.radians(2.0), max_dev_range=0.05):
+        """Mean of one stop's frames after dropping outliers around the median.
+
+        The rover is still, so all frames should agree to ~0.1 deg / ~1 mm;
+        anything farther than 2 deg / 5 cm from the median is a bad frame.
+        """
         samples = np.array(samples)
-        rng = float(samples[:, 0].mean())
-        bearing = math.atan2(np.sin(samples[:, 1]).mean(), np.cos(samples[:, 1]).mean())
-        d = samples[:, 1] - bearing
-        return (len(samples), rng, bearing, float(samples[:, 0].std()),
-                float(np.degrees(np.arctan2(np.sin(d), np.cos(d)).std())))
+        med_r = np.median(samples[:, 0])
+        med_b = math.atan2(np.median(np.sin(samples[:, 1])), np.median(np.cos(samples[:, 1])))
+        db = np.arctan2(np.sin(samples[:, 1] - med_b), np.cos(samples[:, 1] - med_b))
+        keep = (np.abs(db) <= max_dev_bearing) & (np.abs(samples[:, 0] - med_r) <= max_dev_range)
+        good = samples[keep] if keep.any() else samples
+        rng = float(good[:, 0].mean())
+        bearing = math.atan2(np.sin(good[:, 1]).mean(), np.cos(good[:, 1]).mean())
+        d = good[:, 1] - bearing
+        return (len(good), rng, bearing, float(good[:, 0].std()),
+                float(np.degrees(np.arctan2(np.sin(d), np.cos(d)).std())), int((~keep).sum()))
 
     def update_tag(self, tag_id, averaged, retry=False):
-        n, rng, bearing, r_std, b_std = averaged
+        n, rng, bearing, r_std, b_std, n_out = averaged
         yaw_std = math.sqrt(self.slam.robot_cov[2, 2])
         if tag_id not in self.slam.index and n < self.args.min_new_frames:
             status, nis = 'unconfirmed_new', float('nan')
@@ -358,7 +380,7 @@ class SlamNode(Node):
                            f'{math.degrees(bearing):.4f}', f'{r_std:.5f}', f'{b_std:.4f}',
                            ('retry_' if retry else '') + status,
                            '' if math.isnan(nis) else f'{nis:.3f}',
-                           f'{x:.4f}', f'{y:.4f}', f'{math.degrees(yaw):.3f}'])
+                           f'{x:.4f}', f'{y:.4f}', f'{math.degrees(yaw):.3f}', n_out])
         if status == 'new':
             m = self.slam.landmarks()[tag_id][0]
             print(f'  NEW landmark {tag_id} at ({m[0]:+.2f}, {m[1]:+.2f}) m from {n} frames '
@@ -429,6 +451,8 @@ class SlamNode(Node):
         self.motion = (0.0, 0.0)
         self.turn_coast = 0.0
         self.command_target = (0.0, 0.0)
+        # Wheels stop now: only images captured after the coast are trusted.
+        self.accept_after = time.time() + self.args.stamp_margin
         self.set_phase('SETTLE', self.args.settle)
 
     # ------------------------------------------------------------- planning
@@ -691,6 +715,8 @@ def parse_args(argv=None):
     p.add_argument('--segment', type=float, default=0.30, help='max straight segment between stops (m)')
     p.add_argument('--settle', type=float, default=0.5, help='wait after stopping before observing (s)')
     p.add_argument('--observe', type=float, default=1.0, help='observation time per stop (s)')
+    p.add_argument('--stamp-margin', type=float, default=0.3,
+                   help='use only images captured at least this long after the wheels stopped (s)')
     p.add_argument('--init-observe', type=float, default=3.0, help='observation time at the start (s)')
     p.add_argument('--vertex-hold', type=float, default=0.0,
                    help='extra stop at each vertex, e.g. to mark the real position (s)')
