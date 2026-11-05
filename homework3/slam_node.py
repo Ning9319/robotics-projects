@@ -85,6 +85,14 @@ class SlamNode(Node):
         for key, value in hw1.items():
             if hasattr(self.model, key):
                 setattr(self.model, key, value)
+        # Optional per-floor overrides (e.g. a test on a different floor at home).
+        # The HW3 field is on the HW1 floor, so the defaults need no override.
+        if args.speed_per_cmd is not None:
+            self.model.speed_per_cmd = args.speed_per_cmd
+        if args.spin_offset_deg is not None:
+            self.model.spin_offset = args.spin_offset_deg
+        if args.cw_offset_deg is not None:
+            self.model.cw_offset = args.cw_offset_deg
 
         # --- sensor correction and R from Step 2 (homework3/config/sensor_calibration.yaml)
         with open(ROOT / 'homework3/config/sensor_calibration.yaml', encoding='utf-8') as f:
@@ -555,6 +563,12 @@ def parse_args(argv=None):
     p.add_argument('--laps', type=int, default=1)
     p.add_argument('--direction', choices=['ccw', 'cw'], default='ccw')
     p.add_argument('--label', default=None, help='name of the run folder')
+    p.add_argument('--speed-per-cmd', type=float, default=None,
+                   help='override HW1 speed_per_cmd (m/s per command) for another floor')
+    p.add_argument('--spin-offset-deg', type=float, default=None,
+                   help='override HW1 CCW coast angle after a spin (deg) for another floor')
+    p.add_argument('--cw-offset-deg', type=float, default=None,
+                   help='override HW1 CW coast angle after a spin (deg) for another floor')
     p.add_argument('--segment', type=float, default=0.30, help='max straight segment between stops (m)')
     p.add_argument('--settle', type=float, default=0.5, help='wait after stopping before observing (s)')
     p.add_argument('--observe', type=float, default=1.0, help='observation time per stop (s)')
