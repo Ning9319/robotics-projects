@@ -39,10 +39,8 @@ CHI2_2DOF_99 = 9.210
 class NoiseParams:
     """Process (Q) and measurement (R) noise.
 
-    !!! PLACEHOLDER VALUES -- replace with the Step 2 calibration results. !!!
-
     Motion noise is a variance PER UNIT OF MOTION, so it adds up correctly no
-    matter how often predict() is called. Calibrate it as:
+    matter how often predict() is called. The per-unit variances are:
         var_per_m   = (std of the measured error over a segment)^2 / segment_length
         var_per_rad = (std of the measured turn error)^2 / commanded_turn_angle
     """
