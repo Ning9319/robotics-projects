@@ -1,0 +1,19 @@
+# HW4 detector settings; reuse HW2 tag pipeline, with new IDs 8 and 9.
+/**:
+  ros__parameters:
+    image_transport: raw
+    family: 36h11
+    size: 0.165
+    max_hamming: 1
+    detector:
+      threads: 4
+      decimate: 2.0
+      blur: 0.0
+      refine: true
+      sharpening: 0.4
+      debug: false
+    pose_estimation_method: 'pnp'
+    tag:
+      ids: [1, 2, 3, 4, 5, 7, 8, 9]
+      frames: [tag_1, tag_2, tag_3, tag_4, tag_5, tag_7, tag_8, tag_9]
+      sizes: [0.165, 0.165, 0.165, 0.165, 0.165, 0.165, 0.165, 0.165]

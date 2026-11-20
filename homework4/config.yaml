@@ -1,0 +1,29 @@
+# HW4 physical setup, measured 2026-11-19. World origin: lower-left floor corner.
+# +x runs alongside Tags 9,8; +y runs alongside Tags 1,2.
+data_status: MEASURED_HW4_UNVERIFIED_BY_ROBOT
+workspace:
+  side_m: 2.44
+landmarks:  # Tag centers, all z=0.14 m. Tag edge length=0.165 m.
+  1: {x: 0.00, y: 0.42, facing: '+x'}
+  2: {x: 0.00, y: 2.02, facing: '+x'}
+  3: {x: 0.42, y: 2.44, facing: '-y'}
+  4: {x: 2.02, y: 2.44, facing: '-y'}
+  5: {x: 2.44, y: 2.02, facing: '-x'}
+  7: {x: 2.44, y: 0.42, facing: '-x'}
+  8: {x: 2.02, y: 0.00, facing: '+y'}
+  9: {x: 0.42, y: 0.00, facing: '+y'}
+start_xy_m: [2.02, 0.42]
+start_yaw_deg: 90.0
+goal_xy_m: [0.42, 2.02]
+obstacle:
+  center_xy_m: [1.22, 1.22]
+  size_xy_m: [0.55, 0.55]  # ground footprint; height=0.455 m (not needed in 2D)
+  height_m: 0.455
+robot:
+  length_m: 0.175
+  width_m: 0.170
+  radius_m: 0.123    # rounded UP half-diagonal sqrt(.175^2+.170^2)/2
+  camera_forward_offset_m: 0.09  # HW2 extrinsic is reused, do not apply twice
+planning:
+  base_margin_m: 0.10  # initial conservative 10 cm EXTRA beyond robot radius
+  grid_step_m: 0.05
