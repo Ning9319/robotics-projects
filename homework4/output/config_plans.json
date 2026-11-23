@@ -1,0 +1,66 @@
+{
+  "source_config": "homework4/config.yaml",
+  "data_status": "MEASURED_HW4_UNVERIFIED_BY_ROBOT",
+  "workspace_m": 2.44,
+  "conservative_inflation_m": 0.123,
+  "NOTE": "These are PLANNED paths, not actual executed rover trajectories.",
+  "paths": {
+    "shortest": {
+      "waypoints_xy_m": [
+        [
+          2.02,
+          0.42
+        ],
+        [
+          1.618,
+          1.618
+        ],
+        [
+          0.42,
+          2.02
+        ]
+      ],
+      "metrics": {
+        "length_m": 2.5273,
+        "min_obstacle_clearance_m": 0.15574,
+        "min_wall_clearance_m": 0.42,
+        "min_any_clearance_m": 0.15574,
+        "waypoints": 3
+      },
+      "collision_free_in_conservative_cspace": true
+    },
+    "safety": {
+      "waypoints_xy_m": [
+        [
+          2.02,
+          0.42
+        ],
+        [
+          1.9,
+          1.7
+        ],
+        [
+          1.7,
+          1.9
+        ],
+        [
+          0.42,
+          2.02
+        ]
+      ],
+      "metrics": {
+        "length_m": 2.85407,
+        "min_obstacle_clearance_m": 0.42237,
+        "min_wall_clearance_m": 0.42,
+        "min_any_clearance_m": 0.42,
+        "waypoints": 4
+      },
+      "collision_free_in_conservative_cspace": true
+    }
+  },
+  "safety_grid": {
+    "grid_count": 1680,
+    "grid_path_count": 55,
+    "optimal_grid_bottleneck_m": 0.41999999999999993
+  }
+}

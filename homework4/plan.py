@@ -2,8 +2,8 @@
 """HW4 offline-only planning and visualization. NEVER controls the robot.
 
 Usage:
-  python3 homework4/run_planning.py --config homework4/config.yaml
-  python3 homework4/run_planning.py --config homework4/config.yaml
+  python3 homework4/plan.py --config homework4/config.yaml
+  python3 homework4/plan.py --config homework4/config.yaml --out homework4/output/zero_margin
 """
 import argparse
 import json
@@ -33,7 +33,7 @@ def draw_base(ax, world):
     rect_patch(ax, (0, 0, world.side, world.side), fill=False, linewidth=2, edgecolor='black')
     rect_patch(ax, world.raw_obstacle, facecolor='#f5b8ad', edgecolor='#b73b37', label='Raw obstacle')
     rect_patch(ax, world.inflated, fill=False, linestyle='--', linewidth=1.7,
-               edgecolor='#b73b37', label='Conservative inflated obstacle')
+               edgecolor='#b73b37', label='Robot-radius inflated obstacle')
     for tag, (x, y) in world.tags.items():
         ax.scatter([x], [y], marker='s', color='#555', s=25)
         ax.annotate(f'T{tag}', (x, y), xytext=(4, 3), textcoords='offset points', fontsize=7)

@@ -25,5 +25,5 @@ robot:
   radius_m: 0.123    # rounded UP half-diagonal sqrt(.175^2+.170^2)/2
   camera_forward_offset_m: 0.09  # HW2 extrinsic is reused, do not apply twice
 planning:
-  base_margin_m: 0.10  # initial conservative 10 cm EXTRA beyond robot radius
+  base_margin_m: 0.00  # no extra planning margin; C-space inflation is the robot radius only
   grid_step_m: 0.05

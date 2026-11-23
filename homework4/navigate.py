@@ -193,9 +193,9 @@ class HW4Navigation(VisualNavigation):
     def segment_drivable(self, a, b):
         """Conservative physical collision envelope, independent of planning cost.
 
-        HW4's 10 cm *planning* preference is not a collision or abort boundary.
-        A line needs enough space for the body's circumscribed 12.3 cm radius,
-        plus a small execution buffer. This uses the *measured raw* obstacle.
+        Offline planning inflates by the robot radius only (no extra 10 cm).
+        Online execution independently requires the circumscribed radius plus
+        its existing 2 cm buffer, against the measured raw obstacle/walls.
         """
         obstacle_gap, wall_gap = segment_clearances(
             a, b, self.world.side, self.world.raw_obstacle)
@@ -208,9 +208,9 @@ class HW4Navigation(VisualNavigation):
     def replan_from_pose(self, now):
         """Only if a direct recovery to the next route point is physically blocked.
 
-        Preserve the original offline plan for grading. Reroute from the actual
-        position using the same mode's planner; relax its EXTRA planning margin
-        only when the pose lies inside that artificial margin (not the robot).
+        Preserve the original offline plan for grading. For recovery, plan
+        against at least the 2 cm online execution buffer, so a newly planned
+        segment must pass the same physical-clearance check before driving.
         """
         if now - self.last_replan_at < REPLAN_RETRY_SECONDS:
             return False
@@ -218,7 +218,7 @@ class HW4Navigation(VisualNavigation):
         start = (self.pose.x, self.pose.y)
         destination = (self.waypoints_xy[self.stop_after] if not self.stop_at_goal
                        else self.world.goal)
-        for margin in (self.world.base_margin, EXECUTION_BUFFER):
+        for margin in (max(self.world.base_margin, EXECUTION_BUFFER),):
             cfg = {**self.world.cfg,
                    'start_xy_m': list(start), 'goal_xy_m': list(destination),
                    'planning': {**self.world.cfg['planning'], 'base_margin_m': margin}}
@@ -399,7 +399,7 @@ class HW4Navigation(VisualNavigation):
                 self.phase = 'REACQUIRING_TAGS'
         elif not self.rotation_drivable((self.pose.x, self.pose.y)):
             # Physical collision envelope only; no abort for crossing the
-            # *extra* 10 cm planning margin or being off the original route.
+            # chosen offline C-space boundary or being off the original route.
             self.phase = 'WAITING_FOR_CLEAR_POSE'
         else:
             left, right = self.command_for_waypoint(now)

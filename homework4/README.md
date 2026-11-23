@@ -11,15 +11,15 @@ Measured does **not** mean vision/localization, motor, or trajectory are validat
 - `plan.py`: offline graph / clearance / comparison figures, JSON planned paths.
 - `navigate.py`: live known-map navigation using existing HW2 `/tf` transform, HW1 calibration and motor publishing; no new detector, motor driver, or SLAM.
 
-`output/` is produced automatically. Do not commit CSV logs/videos or plots unless needed for the report.
+`output/` contains the two **previously recorded 10 cm planning-margin** run CSVs. Keep those historical logs unchanged. The zero-margin run must have new timestamps/files; do not present old CSVs as new-experiment data.
 
 ## 2. Geometric assumptions
 
 Field: 2.44 m square, world +x along tags 9,8 and +y along 1,2.
 Obstacle x/y in [0.945,1.495], height 0.455 m (height not used in 2D planning).
 Robot body 0.175 m x 0.170 m; approximate rotating robot by **circumscribed disk r=0.123 m**.
-Planning inflation = 0.123 + **0.100 m extra safety margin** = 0.223 m.
-This 10 cm is an INITIAL conservative tuning value, not a measured localization guarantee.
+Planning inflation = **0.123 m robot radius**, with **no additional planning margin**.
+For execution, `navigate.py` separately checks a **0.02 m buffer** beyond the robot radius against the raw obstacle and walls. The zero-margin shortest route has only about **0.033 m nominal clearance beyond the robot radius** (and roughly **0.013 m beyond that execution threshold**) under the measured map. This is a geometric calculation, **not** a guarantee of physical clearance with AprilTag localization and steering error.
 The landmark height z=0.14 m, size=0.165 m, camera longitudinal offset=+0.09 m in the existing HW2 `check_localization.py` and **must not be reapplied**.
 
 The shortest result is optimal only for the **conservatively inflated axis-aligned rectangle model**. The safety result is maximum bottleneck raw clearance **on its 5 cm grid**, not exact continuous Voronoi. Both are collision-checked offline. Report plot and metrics are planned, not executed.
@@ -80,9 +80,9 @@ python3 homework4/navigate.py --mode safety --drive --stop-after-wp 1
 python3 homework4/navigate.py --mode safety --drive
 ```
 
-Run commands **one at a time**, physically reset to marked start and 90-degree yaw for each attempt, and verify motor-stop behavior first with wheels safely raised. `--drive` is the ONLY flag that enables motor commands. Each route does a 2-second Start-pose check, follows waypoints, and writes a separate CSV.
+Run commands **one at a time**, physically reset to marked start and 90-degree yaw for each attempt, and verify motor-stop behavior first with wheels safely raised. `--drive` is the ONLY flag that enables motor commands. Each route checks the start pose and connected motor node, follows waypoints without stopping at intermediate points, and writes a separate CSV.
 
-If visual localization stops updating for >0.75 s: stop immediately, then attempt **one bounded in-place left/right sweep** with stop intervals and two newly accepted TF poses required for resuming. No start-up blind spin, no blind forward drive, no infinite sweeping; stop permanently if search fails, known obstacle/wall clearance is insufficient, or pose deviates too far from the planned corridor. Camera pose fusion/turn timing are still not physically verified for HW4; keep someone next to the rover and be ready to halt manually.
+If visual localization stops updating for >0.75 s, the rover stops forward motion and attempts bounded left/right sweeps. If no tags are reacquired, it remains stopped in `WAITING_FOR_TAG`, without aborting the program. It can resume on fresh consistent poses. If the next leg fails the raw-obstacle clearance check, it attempts a local reroute; otherwise it waits stopped. It does not terminate merely for leaving the planned waypoint corridor. Keep an operator ready to stop the rover and do **not** trust sparse visual updates to guarantee obstacle clearance on the tighter zero-extra-margin route.
 
 ## 6. Upload to your GitHub repository (not uploaded by this ZIP)
 
